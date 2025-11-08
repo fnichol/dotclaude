@@ -1,0 +1,12 @@
+{
+  "alwaysThinkingEnabled": true,
+  "cleanupPeriodDays": 90,
+  "includeCoAuthoredBy": false,
+  "enabledPlugins": {
+    "superpowers@superpowers-marketplace": true,
+    "elements-of-style@superpowers-marketplace": true
+  },
+  "permissions": {
+    "deny": ["Read(./.env)"]
+  }
+}

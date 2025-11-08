@@ -1,0 +1,11 @@
+# Normalize line endings to LF
+* text=auto eol=lf
+
+# Force LF for shell scripts (critical for cross-platform)
+*.sh text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary

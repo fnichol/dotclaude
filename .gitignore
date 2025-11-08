@@ -1,0 +1,20 @@
+# Machine-specific data - never sync these
+home/.claude/history.jsonl
+home/.claude/session-env/
+home/.claude/file-history/
+home/.claude/debug/
+home/.claude/projects/
+home/.claude/downloads/
+home/.claude/todos/
+home/.claude/shell-snapshots/
+home/.claude/statsig/
+home/.claude/agents/
+
+# Plugin cache - downloaded separately on each machine
+home/.claude/plugins/cache/
+
+# Editor and OS files
+.DS_Store
+.vscode/
+*.swp
+*~
