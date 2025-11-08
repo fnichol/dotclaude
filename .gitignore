@@ -18,3 +18,6 @@ home/.claude/plugins/cache/
 .vscode/
 *.swp
 *~
+
+# Local Claude configuration
+.claude/settings.local.json
