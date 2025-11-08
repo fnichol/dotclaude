@@ -4,7 +4,6 @@ JSON_SOURCES := $(shell find . -type f -name '*.json' 2>/dev/null)
 include vendor/mk/base.mk
 include vendor/mk/shell.mk
 include vendor/mk/json.mk
-include vendor/mk/yaml.mk
 
 .PHONY: build
 build: ## Builds the project
