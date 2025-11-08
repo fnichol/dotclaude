@@ -8,7 +8,8 @@
   },
   "enabledPlugins": {
     "superpowers@superpowers-marketplace": true,
-    "elements-of-style@superpowers-marketplace": true
+    "elements-of-style@superpowers-marketplace": true,
+    "obsidian@fnichol-plugins": true
   },
   "alwaysThinkingEnabled": false
 }
