@@ -24,8 +24,7 @@ A personal set of Claude Code configuration for syncing across multiple systems.
 - [What This Syncs](#what-this-syncs)
 - [What This Excludes](#what-this-excludes)
 - [Helper Scripts](#helper-scripts)
-  - [sync-plugin-versions](#sync-plugin-versions)
-  - [verify-plugin-versions](#verify-plugin-versions)
+  - [claude-plugins](#claude-plugins)
 - [Cross-Platform Notes](#cross-platform-notes)
   - [Windows](#windows)
   - [Dependencies](#dependencies)
@@ -56,8 +55,8 @@ updates and changes.
 # Link the castle files
 homeshick link dotclaude
 
-# Sync current plugin versions
-~/.claude/bin/sync-plugin-versions.sh
+# Install plugins to match lock file versions
+claude-plugins install
 
 # Commit and push
 homeshick cd dotclaude
@@ -76,11 +75,11 @@ homeshick clone USERNAME/dotclaude
 # Link files
 homeshick link dotclaude
 
-# Start Claude Code - it will download plugins automatically
-claude
+# Install plugins to match lock file versions
+claude-plugins install
 
 # Verify plugins match expected versions
-~/.claude/bin/verify-plugin-versions.sh
+claude-plugins verify
 ```
 
 ## Usage
@@ -96,8 +95,8 @@ homeshick pull dotclaude
 After updating plugins locally:
 
 ```bash
-# Capture new versions
-~/.claude/bin/sync-plugin-versions.sh
+# Update and capture new versions
+claude-plugins update
 
 # Review changes
 homeshick cd dotclaude
@@ -114,7 +113,7 @@ git push
 Check if installed plugins match expected versions:
 
 ```bash
-~/.claude/bin/verify-plugin-versions.sh
+claude-plugins verify
 ```
 
 Exit codes:
@@ -127,9 +126,9 @@ Exit codes:
 - `CLAUDE.md` - Global instructions
 - `settings.json` - User settings (plugins, environment variables)
 - `plugins/config.json` - Plugin configuration
-- `plugins/known_marketplaces.json` - Marketplace registry
-- `plugins/.plugin-versions` - Plugin version tracking
-- `bin/` - Helper scripts for plugin management
+- `plugins/.marketplaces.lock.json` - Marketplaces lock file
+- `plugins/.plugins.lock.json` - Plugins lock file
+- `.local/bin/` - Helper scripts for plugin management
 
 ## What This Excludes
 
@@ -144,29 +143,33 @@ Machine-specific runtime data is excluded via `.gitignore`:
 
 ## Helper Scripts
 
-### sync-plugin-versions
+### claude-plugins
 
-Scans installed plugins and updates `.plugin-versions` with current commit hashes.
+Unified tool for managing Claude Code plugin marketplaces and installations.
 
-**Requirements:** `jq`
-
-**Usage:**
-
-```bash
-~/.claude/bin/sync-plugin-versions.sh
-```
-
-### verify-plugin-versions.sh
-
-Compares installed plugins against `.plugin-versions` and reports discrepancies.
-
-**Requirements:** `jq`
+**Requirements:** `jq`, `git`
 
 **Usage:**
 
 ```bash
-~/.claude/bin/verify-plugin-versions.sh
+# Install/sync plugins to match lock file versions
+claude-plugins install
+
+# Update marketplaces and capture current plugin versions
+claude-plugins update
+
+# Verify installed plugins match lock file versions
+claude-plugins verify
+
+# Show help
+claude-plugins help
 ```
+
+**Subcommands:**
+
+- `install` - Sync installed marketplaces and plugins to exact lock file versions (equivalent to old `sync-plugins.sh`)
+- `update` - Install/update marketplaces and capture current plugin versions (equivalent to old `update-plugins.sh`)
+- `verify` - Verify installed marketplaces and plugins match lock file versions (equivalent to old `verify-plugins.sh`)
 
 ## Cross-Platform Notes
 
@@ -206,9 +209,8 @@ Claude Code downloads plugins automatically on first run when it detects
 
 ### Version mismatches
 
-Run `~/.claude/bin/verify-plugin-versions.sh` to see differences. Update plugins in
-Claude Code, then run `~/.claude/bin/sync-plugin-versions.sh` to capture new
-versions.
+Run `claude-plugins verify` to see differences. Update plugins in
+Claude Code, then run `claude-plugins update` to capture new versions.
 
 ### Symlink issues on Windows
 
@@ -232,16 +234,16 @@ dotclaude/
 │       ├── shell.mk
 │       └── yaml.mk
 └── home/
+    ├── .local/
+    │   └── bin/
+    │       └── claude-plugins          # Unified plugin management tool
     └── .claude/
         ├── CLAUDE.md       # Global instructions
         ├── settings.json   # User settings
-        ├── bin/
-        │   ├── sync-plugin-versions.sh     # Capture plugin versions
-        │   └── verify-plugin-versions.sh   # Verify plugin versions
         └── plugins/
-            ├── config.json              # Plugin config
-            ├── known_marketplaces.json  # Marketplace registry
-            └── .plugin-versions         # Plugin version tracking
+            ├── config.json                  # Plugin config
+            ├── .marketplaces.lock.json      # Marketplaces lock file
+            └── .plugins.lock.json           # Plugins lock file
 ```
 
 ## Issues

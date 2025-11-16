@@ -13,6 +13,9 @@ home/.claude/agents/
 # Plugin cache - downloaded separately on each machine
 home/.claude/plugins/cache/
 
+# Marketplace tracking - auto-generated with machine-specific paths
+home/.claude/plugins/known_marketplaces.json
+
 # Editor and OS files
 .DS_Store
 .vscode/

@@ -1,4 +1,4 @@
-SH_SOURCES := $(shell find . -type f -name '*.sh' 2>/dev/null)
+SH_SOURCES := $(shell find . -type f -name '*.sh' -o -name 'claude-plugins' 2>/dev/null)
 JSON_SOURCES := $(shell find . -type f -name '*.json' 2>/dev/null)
 
 include vendor/mk/base.mk
