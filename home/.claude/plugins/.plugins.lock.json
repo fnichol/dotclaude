@@ -1,17 +1,17 @@
 {
   "elements-of-style": {
-    "marketplace": "https://github.com/obra/elements-of-style",
     "commit": "6099c505c2a8eb066f3777f83a97d9d828f7954c",
-    "updated": "2025-11-16"
-  },
-  "superpowers": {
-    "marketplace": "https://github.com/obra/superpowers",
-    "commit": "b187e75a1ee46f54247b6720ed49a47bdcc7eb2f",
+    "marketplace": "superpowers-marketplace",
     "updated": "2025-11-16"
   },
   "obsidian": {
+    "commit": "unknown",
     "marketplace": "fnichol-plugins",
-    "commit": "175c382d9995ad96fe0f4b9500d856caeb87f3d0",
+    "updated": "2025-11-16"
+  },
+  "superpowers": {
+    "commit": "b187e75a1ee46f54247b6720ed49a47bdcc7eb2f",
+    "marketplace": "superpowers-marketplace",
     "updated": "2025-11-16"
   }
 }

@@ -1,14 +1,14 @@
 {
-  "superpowers-marketplace": {
+  "fnichol-plugins": {
+    "commit": "175c382d9995ad96fe0f4b9500d856caeb87f3d0",
+    "repo": "fnichol/claude-code-plugins",
     "source": "github",
-    "repo": "obra/superpowers-marketplace",
-    "commit": "6f1ba019cf94368de02e0f3e486f8d75f894af82",
     "updated": "2025-11-16"
   },
-  "fnichol-plugins": {
+  "superpowers-marketplace": {
+    "commit": "6f1ba019cf94368de02e0f3e486f8d75f894af82",
+    "repo": "obra/superpowers-marketplace",
     "source": "github",
-    "repo": "fnichol/claude-code-plugins",
-    "commit": "175c382d9995ad96fe0f4b9500d856caeb87f3d0",
     "updated": "2025-11-16"
   }
 }
