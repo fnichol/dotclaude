@@ -336,6 +336,7 @@ sync_lock_file() {
       entry=$($create_entry_fn "$item_name")
     fi
 
+    # shellcheck disable=SC2016
     update_json_atomic "$lock_file" \
       --arg name "$item_name" \
       --argjson entry "$entry" \
@@ -349,6 +350,7 @@ sync_lock_file() {
   extra=$(list_diff "$lock_items" "$installed_items")
   for item_name in $extra; do
     printf "Removing from lock file: %s\n" "$item_name"
+    # shellcheck disable=SC2016
     update_json_atomic "$lock_file" --arg name "$item_name" 'del(.[$name])'
     removed_count=$((removed_count + 1))
     needs_update=1
@@ -804,6 +806,7 @@ update_marketplaces() {
       --arg updated "$(date -u +%Y-%m-%d)" \
       '{source: $source, repo: $repo, commit: $commit, updated: $updated}')
 
+    # shellcheck disable=SC2016
     update_json_atomic "$MARKETPLACES_LOCK_FILE.tmp" \
       --arg name "$marketplace_name" \
       --argjson entry "$entry" \
@@ -867,6 +870,7 @@ update_plugin_versions() {
       --arg updated "$(date -u +%Y-%m-%d)" \
       '{marketplace: $marketplace, commit: $commit, updated: $updated}')
 
+    # shellcheck disable=SC2016
     update_json_atomic "$PLUGINS_LOCK_FILE.tmp" \
       --arg name "$plugin_name" \
       --argjson entry "$entry" \
