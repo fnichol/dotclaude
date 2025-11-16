@@ -23,9 +23,12 @@ main() {
   MARKETPLACES_LOCK_FILE="${HOME}/.claude/plugins/.marketplaces.lock.json"
   CACHE_DIR="${HOME}/.claude/plugins/cache"
   PLUGINS_LOCK_FILE="${HOME}/.claude/plugins/.plugins.lock.json"
+  KNOWN_MARKETPLACES_FILE="${HOME}/.claude/plugins/known_marketplaces.json"
+  INSTALLED_PLUGINS_FILE="${HOME}/.claude/plugins/installed_plugins.json"
 
   need_cmd jq
   need_cmd git
+  need_cmd claude
 
   case "${1:-}" in
     install)
@@ -53,8 +56,17 @@ main() {
 cmd_install() {
   local exit_code=0
 
+  # Detect and fix marketplace lock file drift
+  sync_marketplace_lock_file || exit_code=1
+  printf "\n"
+
   install_marketplaces || exit_code=1
   printf "\n"
+
+  # Detect and fix plugin lock file drift
+  sync_plugin_lock_file || exit_code=1
+  printf "\n"
+
   install_plugins || exit_code=1
 
   print_summary "$exit_code" \
@@ -83,8 +95,17 @@ cmd_update() {
 cmd_verify() {
   local exit_code=0
 
+  # Detect marketplace lock file drift (but don't fix)
+  verify_marketplace_lock_file || exit_code=1
+  printf "\n"
+
   verify_marketplaces || exit_code=1
   printf "\n"
+
+  # Detect plugin lock file drift (but don't fix)
+  verify_plugin_lock_file || exit_code=1
+  printf "\n"
+
   verify_plugins || exit_code=1
 
   print_summary "$exit_code" \
@@ -94,7 +115,352 @@ cmd_verify() {
   return "$exit_code"
 }
 
-# ============================================================================
+# Detects marketplace lock file drift for verify command (no fix)
+verify_marketplace_lock_file() {
+  print_section "CHECKING MARKETPLACE LOCK FILE DRIFT"
+
+  if [ ! -f "$MARKETPLACES_LOCK_FILE" ]; then
+    printf "Error: marketplaces lock file not found: %s\n" "$MARKETPLACES_LOCK_FILE" >&2
+    return 1
+  fi
+
+  if [ ! -f "$KNOWN_MARKETPLACES_FILE" ]; then
+    printf "Warning: known_marketplaces.json not found: %s\n" "$KNOWN_MARKETPLACES_FILE" >&2
+    printf "No marketplaces are currently added to Claude.\n" >&2
+    return 0
+  fi
+
+  local lock_marketplaces
+  local known_marketplaces
+  local missing_in_lock=0
+  local extra_in_lock=0
+  local exit_code=0
+
+  lock_marketplaces=$(jq -r 'keys[]' "$MARKETPLACES_LOCK_FILE" | sort)
+  known_marketplaces=$(jq -r 'keys[]' "$KNOWN_MARKETPLACES_FILE" | sort)
+
+  # Check for marketplaces in known_marketplaces.json but not in lock file
+  for marketplace_name in $known_marketplaces; do
+    local in_lock
+    in_lock=$(printf "%s\n" "$lock_marketplaces" | grep -x "$marketplace_name" || printf "")
+
+    if [ -z "$in_lock" ]; then
+      printf "DRIFT: Marketplace '%s' is in Claude but not in lock file\n" "$marketplace_name"
+      missing_in_lock=$((missing_in_lock + 1))
+      exit_code=1
+    fi
+  done
+
+  # Check for marketplaces in lock file but not in known_marketplaces.json
+  for marketplace_name in $lock_marketplaces; do
+    local in_known
+    in_known=$(printf "%s\n" "$known_marketplaces" | grep -x "$marketplace_name" || printf "")
+
+    if [ -z "$in_known" ]; then
+      printf "DRIFT: Marketplace '%s' is in lock file but not in Claude\n" "$marketplace_name"
+      extra_in_lock=$((extra_in_lock + 1))
+      exit_code=1
+    fi
+  done
+
+  if [ "$exit_code" -eq 0 ]; then
+    printf "OK: Marketplace lock file is up to date\n"
+  else
+    printf "\n--- Marketplace Lock File Drift Summary ---\n"
+    printf "Missing in lock: %d\n" "$missing_in_lock"
+    printf "Extra in lock:   %d\n" "$extra_in_lock"
+    printf "\nRun 'claude-plugins install' to fix drift.\n"
+  fi
+
+  return "$exit_code"
+}
+
+# Detects and fixes marketplace lock file drift for install command
+sync_marketplace_lock_file() {
+  print_section "SYNCING MARKETPLACE LOCK FILE"
+
+  if [ ! -f "$MARKETPLACES_LOCK_FILE" ]; then
+    printf "Error: marketplaces lock file not found: %s\n" "$MARKETPLACES_LOCK_FILE" >&2
+    return 1
+  fi
+
+  if [ ! -f "$KNOWN_MARKETPLACES_FILE" ]; then
+    printf "Warning: known_marketplaces.json not found: %s\n" "$KNOWN_MARKETPLACES_FILE" >&2
+    printf "No marketplaces are currently added to Claude.\n" >&2
+    return 0
+  fi
+
+  local lock_marketplaces
+  local known_marketplaces
+  local added_count=0
+  local removed_count=0
+  local exit_code=0
+  local needs_update=0
+
+  lock_marketplaces=$(jq -r 'keys[]' "$MARKETPLACES_LOCK_FILE" | sort)
+  known_marketplaces=$(jq -r 'keys[]' "$KNOWN_MARKETPLACES_FILE" | sort)
+
+  # Check for marketplaces in known_marketplaces.json but not in lock file
+  for marketplace_name in $known_marketplaces; do
+    local in_lock
+    in_lock=$(printf "%s\n" "$lock_marketplaces" | grep -x "$marketplace_name" || printf "")
+
+    if [ -z "$in_lock" ]; then
+      printf "Adding to lock file: %s\n" "$marketplace_name"
+
+      # Get marketplace info from known_marketplaces.json
+      local source_obj
+      local source_type
+      local repo
+      source_obj=$(jq -r --arg name "$marketplace_name" '.[$name].source' "$KNOWN_MARKETPLACES_FILE")
+      source_type=$(printf "%s" "$source_obj" | jq -r '.source // "unknown"')
+      repo=$(printf "%s" "$source_obj" | jq -r '.repo // "unknown"')
+
+      # Get current commit from marketplace directory
+      local marketplace_dir
+      local commit="unknown"
+      marketplace_dir=$(jq -r --arg name "$marketplace_name" '.[$name].installLocation' "$KNOWN_MARKETPLACES_FILE")
+
+      if [ -n "$marketplace_dir" ] && [ -d "$marketplace_dir/.git" ]; then
+        cd "$marketplace_dir"
+        commit=$(git rev-parse HEAD 2>/dev/null || printf "unknown")
+        cd - >/dev/null 2>&1
+        printf "  @ %s\n" "$commit"
+      fi
+
+      local updated
+      updated=$(date -u +%Y-%m-%d)
+
+      # Add to lock file
+      local entry
+      entry=$(jq -n \
+        --arg source "$source_type" \
+        --arg repo "$repo" \
+        --arg commit "$commit" \
+        --arg updated "$updated" \
+        '{source: $source, repo: $repo, commit: $commit, updated: $updated}')
+
+      jq --arg name "$marketplace_name" --argjson entry "$entry" \
+        '. + {($name): $entry}' "$MARKETPLACES_LOCK_FILE" >"$MARKETPLACES_LOCK_FILE.tmp"
+      cat "$MARKETPLACES_LOCK_FILE.tmp" >"$MARKETPLACES_LOCK_FILE" && rm "$MARKETPLACES_LOCK_FILE.tmp"
+
+      added_count=$((added_count + 1))
+      needs_update=1
+    fi
+  done
+
+  # Check for marketplaces in lock file but not in known_marketplaces.json
+  for marketplace_name in $lock_marketplaces; do
+    local in_known
+    in_known=$(printf "%s\n" "$known_marketplaces" | grep -x "$marketplace_name" || printf "")
+
+    if [ -z "$in_known" ]; then
+      printf "Removing from lock file: %s\n" "$marketplace_name"
+
+      # Remove from lock file
+      jq --arg name "$marketplace_name" 'del(.[$name])' "$MARKETPLACES_LOCK_FILE" >"$MARKETPLACES_LOCK_FILE.tmp"
+      cat "$MARKETPLACES_LOCK_FILE.tmp" >"$MARKETPLACES_LOCK_FILE" && rm "$MARKETPLACES_LOCK_FILE.tmp"
+
+      removed_count=$((removed_count + 1))
+      needs_update=1
+    fi
+  done
+
+  if [ "$needs_update" -eq 0 ]; then
+    printf "OK: Marketplace lock file is already up to date\n"
+  else
+    printf "\n--- Marketplace Lock File Sync Summary ---\n"
+    printf "Added:   %d\n" "$added_count"
+    printf "Removed: %d\n" "$removed_count"
+    printf "\nMarketplace lock file updated!\n"
+  fi
+
+  return "$exit_code"
+}
+
+# Detects plugin lock file drift for verify command (no fix)
+verify_plugin_lock_file() {
+  print_section "CHECKING PLUGIN LOCK FILE DRIFT"
+
+  if [ ! -f "$PLUGINS_LOCK_FILE" ]; then
+    printf "Error: plugins lock file not found: %s\n" "$PLUGINS_LOCK_FILE" >&2
+    return 1
+  fi
+
+  if [ ! -f "$INSTALLED_PLUGINS_FILE" ]; then
+    printf "Warning: installed_plugins.json not found: %s\n" "$INSTALLED_PLUGINS_FILE" >&2
+    printf "No plugins are currently installed in Claude.\n" >&2
+    return 0
+  fi
+
+  local lock_plugins
+  local installed_plugin_keys
+  local missing_in_lock=0
+  local extra_in_lock=0
+  local exit_code=0
+
+  lock_plugins=$(jq -r 'keys[]' "$PLUGINS_LOCK_FILE" | sort)
+  installed_plugin_keys=$(jq -r '.plugins | keys[]' "$INSTALLED_PLUGINS_FILE" 2>/dev/null | sort)
+
+  # Extract plugin names from keys (format: plugin@marketplace)
+  local installed_plugins
+  installed_plugins=$(printf "%s\n" "$installed_plugin_keys" | sed 's/@.*//' | sort -u)
+
+  # Check for plugins in installed_plugins.json but not in lock file
+  for plugin_name in $installed_plugins; do
+    local in_lock
+    in_lock=$(printf "%s\n" "$lock_plugins" | grep -x "$plugin_name" || printf "")
+
+    if [ -z "$in_lock" ]; then
+      printf "DRIFT: Plugin '%s' is in Claude but not in lock file\n" "$plugin_name"
+      missing_in_lock=$((missing_in_lock + 1))
+      exit_code=1
+    fi
+  done
+
+  # Check for plugins in lock file but not in installed_plugins.json
+  for plugin_name in $lock_plugins; do
+    local in_installed
+    in_installed=$(printf "%s\n" "$installed_plugins" | grep -x "$plugin_name" || printf "")
+
+    if [ -z "$in_installed" ]; then
+      printf "DRIFT: Plugin '%s' is in lock file but not in Claude\n" "$plugin_name"
+      extra_in_lock=$((extra_in_lock + 1))
+      exit_code=1
+    fi
+  done
+
+  if [ "$exit_code" -eq 0 ]; then
+    printf "OK: Plugin lock file is up to date\n"
+  else
+    printf "\n--- Plugin Lock File Drift Summary ---\n"
+    printf "Missing in lock: %d\n" "$missing_in_lock"
+    printf "Extra in lock:   %d\n" "$extra_in_lock"
+    printf "\nRun 'claude-plugins install' to fix drift.\n"
+  fi
+
+  return "$exit_code"
+}
+
+# Detects and fixes plugin lock file drift for install command
+sync_plugin_lock_file() {
+  print_section "SYNCING PLUGIN LOCK FILE"
+
+  if [ ! -f "$PLUGINS_LOCK_FILE" ]; then
+    printf "Error: plugins lock file not found: %s\n" "$PLUGINS_LOCK_FILE" >&2
+    return 1
+  fi
+
+  if [ ! -f "$INSTALLED_PLUGINS_FILE" ]; then
+    printf "Warning: installed_plugins.json not found: %s\n" "$INSTALLED_PLUGINS_FILE" >&2
+    printf "No plugins are currently installed in Claude.\n" >&2
+    return 0
+  fi
+
+  local lock_plugins
+  local installed_plugin_keys
+  local added_count=0
+  local removed_count=0
+  local exit_code=0
+  local needs_update=0
+
+  lock_plugins=$(jq -r 'keys[]' "$PLUGINS_LOCK_FILE" | sort)
+  installed_plugin_keys=$(jq -r '.plugins | keys[]' "$INSTALLED_PLUGINS_FILE" 2>/dev/null | sort)
+
+  # Extract plugin names from keys (format: plugin@marketplace)
+  local installed_plugins
+  installed_plugins=$(printf "%s\n" "$installed_plugin_keys" | sed 's/@.*//' | sort -u)
+
+  # Check for plugins in installed_plugins.json but not in lock file
+  for plugin_name in $installed_plugins; do
+    local in_lock
+    in_lock=$(printf "%s\n" "$lock_plugins" | grep -x "$plugin_name" || printf "")
+
+    if [ -z "$in_lock" ]; then
+      printf "Adding to lock file: %s\n" "$plugin_name"
+
+      # Find the plugin key that contains this plugin name
+      local plugin_key
+      plugin_key=$(printf "%s\n" "$installed_plugin_keys" | grep "^${plugin_name}@" | head -n 1)
+
+      if [ -z "$plugin_key" ]; then
+        printf "  Warning: Could not find plugin key for %s\n" "$plugin_name" >&2
+        continue
+      fi
+
+      # Get plugin info from installed_plugins.json
+      local install_path
+      local marketplace_name
+      local commit="unknown"
+      local git_commit_sha
+
+      install_path=$(jq -r --arg key "$plugin_key" '.plugins[$key].installPath' "$INSTALLED_PLUGINS_FILE")
+      marketplace_name=$(printf "%s" "$plugin_key" | sed 's/.*@//')
+      git_commit_sha=$(jq -r --arg key "$plugin_key" '.plugins[$key].gitCommitSha // "unknown"' "$INSTALLED_PLUGINS_FILE")
+
+      # First try to use gitCommitSha from installed_plugins.json
+      if [ "$git_commit_sha" != "unknown" ] && [ "$git_commit_sha" != "null" ]; then
+        commit="$git_commit_sha"
+        printf "  @ %s\n" "$commit"
+      elif [ -n "$install_path" ] && [ -d "$install_path/.git" ]; then
+        # Fall back to checking git repo directly
+        cd "$install_path"
+        commit=$(git rev-parse HEAD 2>/dev/null || printf "unknown")
+        cd - >/dev/null 2>&1
+        printf "  @ %s\n" "$commit"
+      else
+        printf "  @ %s (local plugin, no git tracking)\n" "$commit"
+      fi
+
+      local updated
+      updated=$(date -u +%Y-%m-%d)
+
+      # Add to lock file
+      local entry
+      entry=$(jq -n \
+        --arg marketplace "$marketplace_name" \
+        --arg commit "$commit" \
+        --arg updated "$updated" \
+        '{marketplace: $marketplace, commit: $commit, updated: $updated}')
+
+      jq --arg name "$plugin_name" --argjson entry "$entry" \
+        '. + {($name): $entry}' "$PLUGINS_LOCK_FILE" >"$PLUGINS_LOCK_FILE.tmp"
+      cat "$PLUGINS_LOCK_FILE.tmp" >"$PLUGINS_LOCK_FILE" && rm "$PLUGINS_LOCK_FILE.tmp"
+
+      added_count=$((added_count + 1))
+      needs_update=1
+    fi
+  done
+
+  # Check for plugins in lock file but not in installed_plugins.json
+  for plugin_name in $lock_plugins; do
+    local in_installed
+    in_installed=$(printf "%s\n" "$installed_plugins" | grep -x "$plugin_name" || printf "")
+
+    if [ -z "$in_installed" ]; then
+      printf "Removing from lock file: %s\n" "$plugin_name"
+
+      # Remove from lock file
+      jq --arg name "$plugin_name" 'del(.[$name])' "$PLUGINS_LOCK_FILE" >"$PLUGINS_LOCK_FILE.tmp"
+      cat "$PLUGINS_LOCK_FILE.tmp" >"$PLUGINS_LOCK_FILE" && rm "$PLUGINS_LOCK_FILE.tmp"
+
+      removed_count=$((removed_count + 1))
+      needs_update=1
+    fi
+  done
+
+  if [ "$needs_update" -eq 0 ]; then
+    printf "OK: Plugin lock file is already up to date\n"
+  else
+    printf "\n--- Plugin Lock File Sync Summary ---\n"
+    printf "Added:   %d\n" "$added_count"
+    printf "Removed: %d\n" "$removed_count"
+    printf "\nPlugin lock file updated!\n"
+  fi
+
+  return "$exit_code"
+}
+
 # Syncs marketplaces to lock file versions
 install_marketplaces() {
   print_section "SYNCING MARKETPLACES TO LOCK FILE"
@@ -104,8 +470,6 @@ install_marketplaces() {
     printf "Run 'claude-plugins update' first to create it.\n" >&2
     return 1
   fi
-
-  mkdir -p "$MARKETPLACES_DIR"
 
   local marketplace_synced_count=0
   local marketplace_skipped_count=0
@@ -118,12 +482,10 @@ install_marketplaces() {
     local source
     local repo
     local expected_commit
-    local marketplace_dir
 
     source=$(jq -r --arg name "$marketplace_name" '.[$name].source' "$MARKETPLACES_LOCK_FILE")
     repo=$(jq -r --arg name "$marketplace_name" '.[$name].repo' "$MARKETPLACES_LOCK_FILE")
     expected_commit=$(jq -r --arg name "$marketplace_name" '.[$name].commit // "unknown"' "$MARKETPLACES_LOCK_FILE")
-    marketplace_dir="$MARKETPLACES_DIR/$marketplace_name"
 
     if [ "$source" != "github" ]; then
       printf "Warning: Skipping %s - only 'github' source is supported\n" "$marketplace_name" >&2
@@ -143,49 +505,72 @@ install_marketplaces() {
       continue
     fi
 
-    if [ -d "$marketplace_dir" ]; then
-      cd "$marketplace_dir"
-      local actual_commit
-      actual_commit=$(git rev-parse HEAD 2>/dev/null || printf "unknown")
+    # Check if marketplace is already installed
+    local is_installed
+    is_installed=$(jq -r --arg name "$marketplace_name" 'has($name)' "$KNOWN_MARKETPLACES_FILE" 2>/dev/null || printf "false")
 
-      if [ "$actual_commit" = "$expected_commit" ]; then
-        printf "Already synced: %s @ %s\n" "$marketplace_name" "$expected_commit"
-      else
-        printf "Syncing: %s\n" "$marketplace_name"
-        printf "  From: %s\n" "$actual_commit"
-        printf "  To:   %s\n" "$expected_commit"
+    if [ "$is_installed" = "true" ]; then
+      # Marketplace exists, check if it's at the right commit
+      local marketplace_dir
+      marketplace_dir=$(jq -r --arg name "$marketplace_name" '.[$name].installLocation' "$KNOWN_MARKETPLACES_FILE")
 
-        git fetch origin >/dev/null 2>&1 || {
-          printf "  Warning: Could not fetch from origin\n" >&2
-        }
+      if [ -d "$marketplace_dir" ]; then
+        cd "$marketplace_dir"
+        local actual_commit
+        actual_commit=$(git rev-parse HEAD 2>/dev/null || printf "unknown")
 
+        if [ "$actual_commit" = "$expected_commit" ]; then
+          printf "Already synced: %s @ %s\n" "$marketplace_name" "$expected_commit"
+          cd - >/dev/null 2>&1
+          continue
+        else
+          printf "Syncing: %s\n" "$marketplace_name"
+          printf "  From: %s\n" "$actual_commit"
+          printf "  To:   %s\n" "$expected_commit"
+
+          git fetch origin >/dev/null 2>&1 || {
+            printf "  Warning: Could not fetch from origin\n" >&2
+          }
+
+          if ! git reset --hard "$expected_commit" 2>/dev/null; then
+            printf "  Error: Could not reset to commit %s\n" "$expected_commit" >&2
+            exit_code=1
+            cd - >/dev/null 2>&1
+            continue
+          fi
+          marketplace_synced_count=$((marketplace_synced_count + 1))
+        fi
+        cd - >/dev/null 2>&1
+      fi
+    else
+      # Marketplace not installed, add it via claude CLI
+      printf "Installing: %s (from %s)\n" "$marketplace_name" "$repo"
+
+      if ! claude plugin marketplace add "$repo" >/dev/null 2>&1; then
+        printf "  Error: Could not add marketplace via 'claude plugin marketplace add'\n" >&2
+        exit_code=1
+        continue
+      fi
+
+      # After adding, reset to the specific commit
+      local marketplace_dir
+      marketplace_dir=$(jq -r --arg name "$marketplace_name" '.[$name].installLocation' "$KNOWN_MARKETPLACES_FILE" 2>/dev/null)
+
+      if [ -n "$marketplace_dir" ] && [ -d "$marketplace_dir" ]; then
+        cd "$marketplace_dir"
         if ! git reset --hard "$expected_commit" 2>/dev/null; then
           printf "  Error: Could not reset to commit %s\n" "$expected_commit" >&2
           exit_code=1
           cd - >/dev/null 2>&1
           continue
         fi
-        marketplace_synced_count=$((marketplace_synced_count + 1))
-      fi
-      cd - >/dev/null 2>&1
-    else
-      printf "Installing: %s @ %s\n" "$marketplace_name" "$expected_commit"
-
-      if ! git clone "https://github.com/$repo.git" "$marketplace_dir" >/dev/null 2>&1; then
-        printf "  Error: Could not clone repository\n" >&2
-        exit_code=1
-        continue
-      fi
-
-      cd "$marketplace_dir"
-      if ! git reset --hard "$expected_commit" 2>/dev/null; then
-        printf "  Error: Could not reset to commit %s\n" "$expected_commit" >&2
-        exit_code=1
         cd - >/dev/null 2>&1
-        continue
+        printf "  @ %s\n" "$expected_commit"
+        marketplace_synced_count=$((marketplace_synced_count + 1))
+      else
+        printf "  Error: Could not find installed marketplace directory\n" >&2
+        exit_code=1
       fi
-      cd - >/dev/null 2>&1
-      marketplace_synced_count=$((marketplace_synced_count + 1))
     fi
   done
 
@@ -208,8 +593,6 @@ install_plugins() {
     return 1
   fi
 
-  mkdir -p "$CACHE_DIR"
-
   local plugin_synced_count=0
   local plugin_skipped_count=0
   local plugin_names
@@ -218,16 +601,14 @@ install_plugins() {
   plugin_names=$(jq -r 'keys[]' "$PLUGINS_LOCK_FILE")
 
   for plugin_name in $plugin_names; do
-    local marketplace
+    local marketplace_name
     local expected_commit
-    local plugin_dir
 
-    marketplace=$(jq -r --arg name "$plugin_name" '.[$name].marketplace' "$PLUGINS_LOCK_FILE")
+    marketplace_name=$(jq -r --arg name "$plugin_name" '.[$name].marketplace' "$PLUGINS_LOCK_FILE")
     expected_commit=$(jq -r --arg name "$plugin_name" '.[$name].commit' "$PLUGINS_LOCK_FILE")
-    plugin_dir="$CACHE_DIR/$plugin_name"
 
-    if [ -z "$marketplace" ] || [ "$marketplace" = "null" ] || [ "$marketplace" = "unknown" ]; then
-      printf "Warning: Skipping %s - no marketplace URL\n" "$plugin_name" >&2
+    if [ -z "$marketplace_name" ] || [ "$marketplace_name" = "null" ] || [ "$marketplace_name" = "unknown" ]; then
+      printf "Warning: Skipping %s - no marketplace specified\n" "$plugin_name" >&2
       plugin_skipped_count=$((plugin_skipped_count + 1))
       continue
     fi
@@ -238,49 +619,84 @@ install_plugins() {
       continue
     fi
 
-    if [ -d "$plugin_dir" ]; then
-      cd "$plugin_dir"
+    # Check if plugin is already installed
+    # Search by plugin name across all marketplaces (handles URL vs name mismatch)
+    local installed_plugin_key
+    installed_plugin_key=$(jq -r --arg name "$plugin_name" '
+      .plugins | keys[] | select(startswith($name + "@"))
+    ' "$INSTALLED_PLUGINS_FILE" 2>/dev/null | head -n 1)
+
+    local is_installed
+    if [ -n "$installed_plugin_key" ]; then
+      is_installed="true"
+    else
+      is_installed="false"
+    fi
+
+    if [ "$is_installed" = "true" ]; then
+      # Plugin exists, check if it's at the right commit
+      local install_path
       local actual_commit
-      actual_commit=$(git rev-parse HEAD 2>/dev/null || printf "unknown")
+      install_path=$(jq -r --arg key "$installed_plugin_key" '.plugins[$key].installPath' "$INSTALLED_PLUGINS_FILE")
 
-      if [ "$actual_commit" = "$expected_commit" ]; then
-        printf "Already synced: %s @ %s\n" "$plugin_name" "$expected_commit"
-      else
-        printf "Syncing: %s\n" "$plugin_name"
-        printf "  From: %s\n" "$actual_commit"
-        printf "  To:   %s\n" "$expected_commit"
+      if [ -d "$install_path" ]; then
+        cd "$install_path"
+        actual_commit=$(git rev-parse HEAD 2>/dev/null || printf "unknown")
 
-        git fetch origin >/dev/null 2>&1 || {
-          printf "  Warning: Could not fetch from origin\n" >&2
-        }
+        if [ "$actual_commit" = "$expected_commit" ]; then
+          printf "Already synced: %s @ %s\n" "$plugin_name" "$expected_commit"
+          cd - >/dev/null 2>&1
+          continue
+        else
+          printf "Syncing: %s\n" "$plugin_name"
+          printf "  From: %s\n" "$actual_commit"
+          printf "  To:   %s\n" "$expected_commit"
 
+          git fetch origin >/dev/null 2>&1 || {
+            printf "  Warning: Could not fetch from origin\n" >&2
+          }
+
+          if ! git reset --hard "$expected_commit" 2>/dev/null; then
+            printf "  Error: Could not reset to commit %s\n" "$expected_commit" >&2
+            exit_code=1
+            cd - >/dev/null 2>&1
+            continue
+          fi
+          plugin_synced_count=$((plugin_synced_count + 1))
+        fi
+        cd - >/dev/null 2>&1
+      fi
+    else
+      # Plugin not installed, install it via claude CLI
+      # Construct plugin_key using marketplace_name from lock file
+      local plugin_key="${plugin_name}@${marketplace_name}"
+      printf "Installing: %s (from %s)\n" "$plugin_name" "$marketplace_name"
+
+      if ! claude plugin install "$plugin_key" >/dev/null 2>&1; then
+        printf "  Error: Could not install plugin via 'claude plugin install'\n" >&2
+        exit_code=1
+        continue
+      fi
+
+      # After installing, reset to the specific commit
+      local install_path
+      install_path=$(jq -r --arg key "$plugin_key" '.plugins[$key].installPath' "$INSTALLED_PLUGINS_FILE" 2>/dev/null)
+
+      if [ -n "$install_path" ] && [ -d "$install_path" ]; then
+        cd "$install_path"
         if ! git reset --hard "$expected_commit" 2>/dev/null; then
           printf "  Error: Could not reset to commit %s\n" "$expected_commit" >&2
           exit_code=1
           cd - >/dev/null 2>&1
           continue
         fi
-        plugin_synced_count=$((plugin_synced_count + 1))
-      fi
-      cd - >/dev/null 2>&1
-    else
-      printf "Installing: %s @ %s\n" "$plugin_name" "$expected_commit"
-
-      if ! git clone "$marketplace.git" "$plugin_dir" >/dev/null 2>&1; then
-        printf "  Error: Could not clone repository from %s\n" "$marketplace" >&2
-        exit_code=1
-        continue
-      fi
-
-      cd "$plugin_dir"
-      if ! git reset --hard "$expected_commit" 2>/dev/null; then
-        printf "  Error: Could not reset to commit %s\n" "$expected_commit" >&2
-        exit_code=1
         cd - >/dev/null 2>&1
-        continue
+        printf "  @ %s\n" "$expected_commit"
+        plugin_synced_count=$((plugin_synced_count + 1))
+      else
+        printf "  Error: Could not find installed plugin directory\n" >&2
+        exit_code=1
       fi
-      cd - >/dev/null 2>&1
-      plugin_synced_count=$((plugin_synced_count + 1))
     fi
   done
 
@@ -302,8 +718,6 @@ update_marketplaces() {
     return 1
   fi
 
-  mkdir -p "$MARKETPLACES_DIR"
-
   printf "{}\n" >"$MARKETPLACES_LOCK_FILE.tmp"
 
   local marketplace_names
@@ -312,11 +726,9 @@ update_marketplaces() {
   for marketplace_name in $marketplace_names; do
     local source
     local repo
-    local marketplace_dir
 
     source=$(jq -r --arg name "$marketplace_name" '.[$name].source' "$MARKETPLACES_LOCK_FILE")
     repo=$(jq -r --arg name "$marketplace_name" '.[$name].repo' "$MARKETPLACES_LOCK_FILE")
-    marketplace_dir="$MARKETPLACES_DIR/$marketplace_name"
 
     if [ "$source" != "github" ]; then
       printf "Warning: Skipping %s - only 'github' source is supported\n" "$marketplace_name" >&2
@@ -328,21 +740,29 @@ update_marketplaces() {
       continue
     fi
 
-    if [ -d "$marketplace_dir" ]; then
-      printf "Updating: %s\n" "$marketplace_name"
-      cd "$marketplace_dir"
-      git fetch origin
-      git reset --hard origin/main 2>/dev/null || git reset --hard origin/master 2>/dev/null || {
-        printf "  Warning: Could not reset to origin/main or origin/master\n" >&2
-      }
-      cd - >/dev/null 2>&1
-    else
-      printf "Installing: %s\n" "$marketplace_name"
-      git clone "https://github.com/$repo.git" "$marketplace_dir"
+    # Check if marketplace is already tracked by claude CLI
+    local is_known
+    is_known=$(jq -r --arg name "$marketplace_name" 'has($name)' "$KNOWN_MARKETPLACES_FILE" 2>/dev/null || printf "false")
+
+    if [ "$is_known" = "false" ]; then
+      printf "Adding: %s (from %s)\n" "$marketplace_name" "$repo"
+      if ! claude plugin marketplace add "$repo" >/dev/null 2>&1; then
+        printf "  Warning: Could not add marketplace\n" >&2
+        continue
+      fi
     fi
 
+    printf "Updating: %s\n" "$marketplace_name"
+    if ! claude plugin marketplace update "$marketplace_name" >/dev/null 2>&1; then
+      printf "  Warning: Could not update marketplace\n" >&2
+    fi
+
+    # Get the current commit after update
+    local marketplace_dir
     local commit="unknown"
-    if [ -d "$marketplace_dir/.git" ]; then
+    marketplace_dir=$(jq -r --arg name "$marketplace_name" '.[$name].installLocation' "$KNOWN_MARKETPLACES_FILE" 2>/dev/null)
+
+    if [ -n "$marketplace_dir" ] && [ -d "$marketplace_dir/.git" ]; then
       cd "$marketplace_dir"
       commit=$(git rev-parse HEAD 2>/dev/null || printf "unknown")
       cd - >/dev/null 2>&1
@@ -379,45 +799,48 @@ update_marketplaces() {
 update_plugin_versions() {
   print_section "UPDATING PLUGIN VERSIONS"
 
-  if [ ! -d "$CACHE_DIR" ]; then
-    printf "Warning: Plugin cache directory not found: %s\n" "$CACHE_DIR" >&2
+  if [ ! -f "$INSTALLED_PLUGINS_FILE" ]; then
+    printf "Warning: No plugins installed yet.\n" >&2
     printf "Skipping plugin version update.\n" >&2
     return 0
   fi
 
   printf "{}\n" >"$PLUGINS_LOCK_FILE.tmp"
 
-  for plugin_dir in "$CACHE_DIR"/*; do
-    if [ ! -d "$plugin_dir" ]; then
-      continue
-    fi
+  # Iterate through all installed plugins
+  local plugin_keys
+  plugin_keys=$(jq -r '.plugins | keys[]' "$INSTALLED_PLUGINS_FILE" 2>/dev/null)
 
+  for plugin_key in $plugin_keys; do
+    local install_path
     local plugin_name
-    local plugin_json
-    plugin_name=$(basename "$plugin_dir")
-    plugin_json="$plugin_dir/.claude-plugin/plugin.json"
+    local marketplace_name
+    local commit
 
-    if [ ! -f "$plugin_json" ]; then
-      printf "Warning: Skipping %s - no plugin.json found\n" "$plugin_name" >&2
+    install_path=$(jq -r --arg key "$plugin_key" '.plugins[$key].installPath' "$INSTALLED_PLUGINS_FILE")
+
+    # Extract plugin name and marketplace from the key (format: plugin@marketplace)
+    plugin_name=$(printf "%s" "$plugin_key" | sed 's/@.*//')
+    marketplace_name=$(printf "%s" "$plugin_key" | sed 's/.*@//')
+
+    if [ ! -d "$install_path" ]; then
+      printf "Warning: Skipping %s - install path not found: %s\n" "$plugin_name" "$install_path" >&2
       continue
     fi
 
-    local commit="unknown"
-    if [ -d "$plugin_dir/.git" ]; then
-      cd "$plugin_dir"
+    commit="unknown"
+    if [ -d "$install_path/.git" ]; then
+      cd "$install_path"
       commit=$(git rev-parse HEAD 2>/dev/null || printf "unknown")
       cd - >/dev/null 2>&1
     fi
-
-    local marketplace
-    marketplace=$(jq -r '.homepage // .repository // "unknown"' "$plugin_json")
 
     local updated
     updated=$(date -u +%Y-%m-%d)
 
     local entry
     entry=$(jq -n \
-      --arg marketplace "$marketplace" \
+      --arg marketplace "$marketplace_name" \
       --arg commit "$commit" \
       --arg updated "$updated" \
       '{marketplace: $marketplace, commit: $commit, updated: $updated}')
@@ -563,10 +986,43 @@ verify_plugins() {
   expected_plugins=$(jq -r 'keys[]' "$PLUGINS_LOCK_FILE")
 
   for plugin_name in $expected_plugins; do
-    local plugin_dir="$CACHE_DIR/$plugin_name"
     local expected_commit
+    local marketplace_name
+    local plugin_dir
+    local actual_commit="unknown"
 
     expected_commit=$(jq -r --arg name "$plugin_name" '.[$name].commit' "$PLUGINS_LOCK_FILE")
+    marketplace_name=$(jq -r --arg name "$plugin_name" '.[$name].marketplace' "$PLUGINS_LOCK_FILE")
+
+    # Look up actual install path and commit from installed_plugins.json
+    if [ -f "$INSTALLED_PLUGINS_FILE" ]; then
+      local plugin_key="${plugin_name}@${marketplace_name}"
+      local install_path
+      local git_commit_sha
+
+      install_path=$(jq -r --arg key "$plugin_key" '.plugins[$key].installPath // empty' "$INSTALLED_PLUGINS_FILE")
+      git_commit_sha=$(jq -r --arg key "$plugin_key" '.plugins[$key].gitCommitSha // "unknown"' "$INSTALLED_PLUGINS_FILE")
+
+      if [ -n "$install_path" ]; then
+        plugin_dir="$install_path"
+
+        # First try to use gitCommitSha from installed_plugins.json
+        if [ "$git_commit_sha" != "unknown" ] && [ "$git_commit_sha" != "null" ]; then
+          actual_commit="$git_commit_sha"
+        elif [ -d "$plugin_dir/.git" ]; then
+          # Fall back to checking git repo directly
+          cd "$plugin_dir"
+          actual_commit=$(git rev-parse HEAD 2>/dev/null || printf "unknown")
+          cd - >/dev/null 2>&1
+        fi
+      else
+        # Fall back to cache directory if not in installed_plugins.json
+        plugin_dir="$CACHE_DIR/$plugin_name"
+      fi
+    else
+      # Fall back to cache directory if installed_plugins.json doesn't exist
+      plugin_dir="$CACHE_DIR/$plugin_name"
+    fi
 
     if [ ! -d "$plugin_dir" ]; then
       printf "MISSING: %s (expected @ %s)\n" "$plugin_name" "$expected_commit"
@@ -575,8 +1031,8 @@ verify_plugins() {
       continue
     fi
 
-    local actual_commit="unknown"
-    if [ -d "$plugin_dir/.git" ]; then
+    # If we haven't gotten the commit yet, try from git directly
+    if [ "$actual_commit" = "unknown" ] && [ -d "$plugin_dir/.git" ]; then
       cd "$plugin_dir"
       actual_commit=$(git rev-parse HEAD 2>/dev/null || printf "unknown")
       cd - >/dev/null 2>&1
