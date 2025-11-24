@@ -2,16 +2,16 @@
   "elements-of-style": {
     "commit": "6099c505c2a8eb066f3777f83a97d9d828f7954c",
     "marketplace": "superpowers-marketplace",
-    "updated": "2025-11-17"
+    "updated": "2025-11-24"
   },
   "obsidian": {
     "commit": "unknown",
     "marketplace": "fnichol-plugins",
-    "updated": "2025-11-17"
+    "updated": "2025-11-24"
   },
   "superpowers": {
     "commit": "02c87670de64b236ffd3239305dd71190983679d",
     "marketplace": "superpowers-marketplace",
-    "updated": "2025-11-17"
+    "updated": "2025-11-24"
   }
 }

@@ -3,12 +3,12 @@
     "commit": "175c382d9995ad96fe0f4b9500d856caeb87f3d0",
     "repo": "fnichol/claude-code-plugins",
     "source": "github",
-    "updated": "2025-11-17"
+    "updated": "2025-11-24"
   },
   "superpowers-marketplace": {
-    "commit": "6f1ba019cf94368de02e0f3e486f8d75f894af82",
+    "commit": "317612f937871ffd4fd3bff0475abca15312f63b",
     "repo": "obra/superpowers-marketplace",
     "source": "github",
-    "updated": "2025-11-17"
+    "updated": "2025-11-24"
   }
 }
