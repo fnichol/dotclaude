@@ -7,9 +7,10 @@
     ]
   },
   "enabledPlugins": {
-    "superpowers@superpowers-marketplace": true,
+    "superpowers@superpowers-marketplace": false,
     "elements-of-style@superpowers-marketplace": true,
-    "obsidian@fnichol-plugins": true
+    "obsidian@fnichol-plugins": true,
+    "superpowers@fnichol-plugins": true
   },
   "alwaysThinkingEnabled": true
 }

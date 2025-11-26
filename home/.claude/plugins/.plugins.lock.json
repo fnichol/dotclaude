@@ -2,16 +2,16 @@
   "elements-of-style": {
     "commit": "6099c505c2a8eb066f3777f83a97d9d828f7954c",
     "marketplace": "superpowers-marketplace",
-    "updated": "2025-11-24"
+    "updated": "2025-11-26"
   },
   "obsidian": {
-    "commit": "unknown",
+    "commit": "175c382d9995ad96fe0f4b9500d856caeb87f3d0",
     "marketplace": "fnichol-plugins",
-    "updated": "2025-11-24"
+    "updated": "2025-11-26"
   },
   "superpowers": {
-    "commit": "02c87670de64b236ffd3239305dd71190983679d",
-    "marketplace": "superpowers-marketplace",
-    "updated": "2025-11-24"
+    "commit": "493ea536f6272091ab078562fa6bd39e84034f15",
+    "marketplace": "fnichol-plugins",
+    "updated": "2025-11-26"
   }
 }
