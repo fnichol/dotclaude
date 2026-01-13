@@ -234,14 +234,14 @@ create_plugin_lock_entry() {
   install_path=$(
     jq -r \
       --arg key "$plugin_key" \
-      '.plugins[$key].installPath' \
+      '.plugins[$key][0].installPath' \
       "$INSTALLED_PLUGINS_FILE"
   )
   marketplace_name=$(printf "%s" "$plugin_key" | sed 's/.*@//')
   git_commit_sha=$(
     jq -r \
       --arg key "$plugin_key" \
-      '.plugins[$key].gitCommitSha // "unknown"' \
+      '.plugins[$key][0].gitCommitSha // "unknown"' \
       "$INSTALLED_PLUGINS_FILE"
   )
 
@@ -621,42 +621,35 @@ install_plugins() {
 
     if [ "$is_installed" = "true" ]; then
       # Plugin exists, check if it's at the right commit
-      local install_path
       local actual_commit
-      install_path=$(
+      actual_commit=$(
         jq -r \
           --arg key "$installed_plugin_key" \
-          '.plugins[$key].installPath' \
+          '.plugins[$key][0].gitCommitSha // "unknown"' \
           "$INSTALLED_PLUGINS_FILE"
       )
 
-      if [ -d "$install_path" ]; then
-        cd "$install_path"
-        actual_commit=$(git rev-parse HEAD 2>/dev/null || printf "unknown")
+      if [ "$actual_commit" = "$expected_commit" ]; then
+        printf "Already synced: %s @ %s\n" "$plugin_name" "$expected_commit"
+        continue
+      else
+        printf "Syncing: %s\n" "$plugin_name"
+        printf "  From: %s\n" "$actual_commit"
+        printf "  To:   %s\n" "$expected_commit"
 
-        if [ "$actual_commit" = "$expected_commit" ]; then
-          printf "Already synced: %s @ %s\n" "$plugin_name" "$expected_commit"
-          cd - >/dev/null 2>&1
-          continue
-        else
-          printf "Syncing: %s\n" "$plugin_name"
-          printf "  From: %s\n" "$actual_commit"
-          printf "  To:   %s\n" "$expected_commit"
-
-          git fetch origin >/dev/null 2>&1 || {
-            printf "  Warning: Could not fetch from origin\n" >&2
-          }
-
-          if ! git reset --hard "$expected_commit" 2>/dev/null; then
-            printf "  Error: Could not reset to commit %s\n" \
-              "$expected_commit" >&2
-            exit_code=1
-            cd - >/dev/null 2>&1
-            continue
-          fi
-          plugin_synced_count=$((plugin_synced_count + 1))
+        # Reinstall plugin to get it from marketplace at correct commit
+        if ! claude plugin remove "$installed_plugin_key" >/dev/null 2>&1; then
+          printf "  Warning: Could not remove plugin\n" >&2
         fi
-        cd - >/dev/null 2>&1
+
+        local plugin_key="${plugin_name}@${marketplace_name}"
+        if ! claude plugin install "$plugin_key" >/dev/null 2>&1; then
+          printf "  Error: Could not install plugin via 'claude plugin install'\n" >&2
+          exit_code=1
+          continue
+        fi
+        printf "  @ %s\n" "$expected_commit"
+        plugin_synced_count=$((plugin_synced_count + 1))
       fi
     else
       # Plugin not installed, install it via claude CLI
@@ -670,31 +663,9 @@ install_plugins() {
         continue
       fi
 
-      # After installing, reset to the specific commit
-      local install_path
-      install_path=$(
-        jq -r \
-          --arg key "$plugin_key" \
-          '.plugins[$key].installPath' \
-          "$INSTALLED_PLUGINS_FILE" 2>/dev/null
-      )
-
-      if [ -n "$install_path" ] && [ -d "$install_path" ]; then
-        cd "$install_path"
-        if ! git reset --hard "$expected_commit" 2>/dev/null; then
-          printf "  Error: Could not reset to commit %s\n" \
-            "$expected_commit" >&2
-          exit_code=1
-          cd - >/dev/null 2>&1
-          continue
-        fi
-        cd - >/dev/null 2>&1
-        printf "  @ %s\n" "$expected_commit"
-        plugin_synced_count=$((plugin_synced_count + 1))
-      else
-        printf "  Error: Could not find installed plugin directory\n" >&2
-        exit_code=1
-      fi
+      # Plugin installed from marketplace at its current commit
+      printf "  @ %s\n" "$expected_commit"
+      plugin_synced_count=$((plugin_synced_count + 1))
     fi
   done
 
@@ -838,7 +809,7 @@ update_plugin_versions() {
     install_path=$(
       jq -r \
         --arg key "$plugin_key" \
-        '.plugins[$key].installPath' \
+        '.plugins[$key][0].installPath' \
         "$INSTALLED_PLUGINS_FILE"
     )
 
@@ -1048,13 +1019,13 @@ verify_plugins() {
       install_path=$(
         jq -r \
           --arg key "$plugin_key" \
-          '.plugins[$key].installPath // empty' \
+          '.plugins[$key][0].installPath // empty' \
           "$INSTALLED_PLUGINS_FILE"
       )
       git_commit_sha=$(
         jq -r \
           --arg key "$plugin_key" \
-          '.plugins[$key].gitCommitSha // "unknown"' \
+          '.plugins[$key][0].gitCommitSha // "unknown"' \
           "$INSTALLED_PLUGINS_FILE"
       )
 
