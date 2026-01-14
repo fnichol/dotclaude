@@ -956,6 +956,46 @@ update_plugin_versions() {
       commit=$(get_git_commit "$install_path")
     fi
 
+    # Check if plugin is URL-sourced and has a newer version available
+    if [ "$commit" != "unknown" ]; then
+      local plugin_source
+      plugin_source=$(get_plugin_source_from_marketplace "$plugin_name" "$marketplace_name")
+
+      if [ "${plugin_source#url }" != "$plugin_source" ]; then
+        # Extract URL from "url <git-url>" format
+        local remote_url="${plugin_source#url }"
+        local remote_commit
+        remote_commit=$(get_remote_git_commit "$remote_url")
+
+        if [ "$remote_commit" != "unknown" ] && [ "$remote_commit" != "$commit" ]; then
+          printf "Updating: %s (URL-sourced plugin has newer version)\n" "$plugin_name"
+          printf "  From: %s\n" "$commit"
+          printf "  To:   %s\n" "$remote_commit"
+
+          # Reinstall plugin to get latest version
+          if ! claude plugin remove "$plugin_key" >/dev/null 2>&1; then
+            printf "  Warning: Could not remove plugin\n" >&2
+          fi
+
+          if ! claude plugin install "$plugin_key" >/dev/null 2>&1; then
+            printf "  Error: Could not reinstall plugin\n" >&2
+          else
+            # Re-read the updated gitCommitSha after reinstall
+            git_commit_sha=$(
+              jq -r \
+                --arg key "$plugin_key" \
+                '.plugins[$key][0].gitCommitSha // "unknown"' \
+                "$INSTALLED_PLUGINS_FILE"
+            )
+            if [ "$git_commit_sha" != "unknown" ] && [ "$git_commit_sha" != "null" ]; then
+              commit="$git_commit_sha"
+              printf "  Updated to: %s\n" "$commit"
+            fi
+          fi
+        fi
+      fi
+    fi
+
     # If still unknown, fall back to marketplace commit
     if [ "$commit" = "unknown" ]; then
       local marketplace_commit
@@ -1342,6 +1382,68 @@ get_git_commit() {
   local dir="$1"
   if [ -d "$dir/.git" ]; then
     (cd "$dir" && git rev-parse HEAD 2>/dev/null) || printf "unknown"
+  else
+    printf "unknown"
+  fi
+}
+
+# Gets latest commit SHA from a remote git URL
+# Arguments:
+#   $1 - Git URL
+# Returns: commit SHA or "unknown"
+get_remote_git_commit() {
+  local url="$1"
+  git ls-remote "$url" HEAD 2>/dev/null | awk '{print $1}' || printf "unknown"
+}
+
+# Gets plugin source information from marketplace
+# Arguments:
+#   $1 - Plugin name
+#   $2 - Marketplace name
+# Returns: "url <git-url>" if URL-sourced, "local" if local, "unknown" otherwise
+get_plugin_source_from_marketplace() {
+  local plugin_name="$1"
+  local marketplace_name="$2"
+  local marketplace_dir
+  local marketplace_json
+
+  marketplace_dir=$(
+    jq -r \
+      --arg name "$marketplace_name" \
+      '.[$name].installLocation' \
+      "$KNOWN_MARKETPLACES_FILE" 2>/dev/null
+  )
+
+  if [ -z "$marketplace_dir" ] || [ ! -d "$marketplace_dir" ]; then
+    printf "unknown"
+    return
+  fi
+
+  marketplace_json="$marketplace_dir/.claude-plugin/marketplace.json"
+  if [ ! -f "$marketplace_json" ]; then
+    printf "unknown"
+    return
+  fi
+
+  local source_type
+  source_type=$(
+    jq -r \
+      --arg name "$plugin_name" \
+      '.plugins[] | select(.name == $name) | .source | if type == "object" then .source else "local" end' \
+      "$marketplace_json" 2>/dev/null
+  )
+
+  if [ "$source_type" = "url" ]; then
+    local url
+    url=$(
+      jq -r \
+        --arg name "$plugin_name" \
+        '.plugins[] | select(.name == $name) | .source.url' \
+        "$marketplace_json" 2>/dev/null
+    )
+    printf "url %s" "$url"
+  elif [ -n "$source_type" ]; then
+    printf "local"
   else
     printf "unknown"
   fi
