@@ -10,7 +10,8 @@
     "superpowers@superpowers-marketplace": false,
     "elements-of-style@superpowers-marketplace": true,
     "obsidian@fnichol-plugins": true,
-    "superpowers@fnichol-plugins": true
+    "superpowers@fnichol-plugins": true,
+    "rust-analyzer-lsp@claude-plugins-official": true
   },
   "alwaysThinkingEnabled": true
 }
