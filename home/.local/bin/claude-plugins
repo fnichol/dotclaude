@@ -432,7 +432,8 @@ sync_plugin_lock_file() {
     # Extract plugin name (without marketplace)
     local plugin_name
     plugin_name=$(printf "%s" "$plugin_key" | sed 's/@.*//')
-    installed_plugins_list="${installed_plugins_list}${plugin_name}"$'\n'
+    installed_plugins_list="${installed_plugins_list}${plugin_name}
+"
   done
 
   installed_plugins_list=$(printf "%s" "$installed_plugins_list" | sort | uniq)
