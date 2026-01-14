@@ -168,8 +168,16 @@ claude-plugins help
 **Subcommands:**
 
 - `install` - Sync installed marketplaces and plugins to exact lock file versions (equivalent to old `sync-plugins.sh`)
+  - Automatically detects and adds new marketplaces to the lock file
+  - Detects and adds new enabled plugins to the lock file
 - `update` - Install/update marketplaces and capture current plugin versions (equivalent to old `update-plugins.sh`)
 - `verify` - Verify installed marketplaces and plugins match lock file versions (equivalent to old `verify-plugins.sh`)
+
+**Notes:**
+
+- Only **enabled** plugins (from `settings.json`) are tracked in the lock files
+- Disabled plugins are automatically excluded from sync and verification operations
+- When you enable a plugin from a new marketplace, run `claude-plugins install` to add both the marketplace and plugin to the lock files
 
 ## Cross-Platform Notes
 
