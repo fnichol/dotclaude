@@ -5,16 +5,18 @@ set -eu
 print_usage() {
   cat <<-EOF
 	claude-plugins - Manage Claude Code plugin marketplaces and installations
-	
+
 	USAGE:
 	    claude-plugins <SUBCOMMAND>
-	
+
 	SUBCOMMANDS:
 	    install    Sync installed marketplaces and plugins to exact lock file versions
 	    update     Install/update marketplaces and capture current plugin versions
 	    verify     Verify installed marketplaces and plugins match lock file versions
+	    render     Render settings.json from settings.base.json + the local overlay
+	    capture    Capture live settings.json changes back into base or local overlay
 	    help       Print this help message
-	
+
 	EOF
 }
 
@@ -26,10 +28,19 @@ main() {
   KNOWN_MARKETPLACES_FILE="${HOME}/.claude/plugins/known_marketplaces.json"
   INSTALLED_PLUGINS_FILE="${HOME}/.claude/plugins/installed_plugins.json"
   SETTINGS_FILE="${HOME}/.claude/settings.json"
+  BASE_SETTINGS_FILE="${HOME}/.claude/settings.base.json"
+  LOCAL_OVERLAY_FILE="${HOME}/.claude/settings.local-overlay.json"
+  RENDERED_SNAPSHOT_FILE="${HOME}/.claude/.settings.rendered.json"
 
   need_cmd jq
   need_cmd git
   need_cmd claude
+
+  # Claude Code's internal state files are not a public API. Fail loudly
+  # and immediately if their shape looks unlike what this script expects,
+  # rather than silently mis-recording drift against them.
+  assert_known_marketplaces_schema "$KNOWN_MARKETPLACES_FILE"
+  assert_installed_plugins_schema "$INSTALLED_PLUGINS_FILE"
 
   case "${1:-}" in
     install)
@@ -40,6 +51,12 @@ main() {
       ;;
     verify)
       cmd_verify
+      ;;
+    render)
+      cmd_render
+      ;;
+    capture)
+      cmd_capture
       ;;
     help | --help | -h)
       print_usage
@@ -56,6 +73,9 @@ main() {
 
 cmd_install() {
   local exit_code=0
+
+  render_settings || exit_code=1
+  printf "\n"
 
   sync_marketplace_lock_file || exit_code=1
   printf "\n"
@@ -94,6 +114,10 @@ cmd_update() {
 cmd_verify() {
   local exit_code=0
 
+  # Detect settings.json render drift (but don't fix)
+  verify_settings_render || exit_code=1
+  printf "\n"
+
   # Detect marketplace lock file drift (but don't fix)
   verify_marketplace_lock_file || exit_code=1
   printf "\n"
@@ -112,6 +136,14 @@ cmd_verify() {
     "Some marketplaces or plugins need attention"
 
   return "$exit_code"
+}
+
+cmd_render() {
+  render_settings
+}
+
+cmd_capture() {
+  capture_settings
 }
 
 # Generic function to detect lock file drift (verify mode - no fix)
@@ -1320,6 +1352,237 @@ verify_plugins() {
   fi
 
   return "$exit_code"
+}
+
+# Renders ~/.claude/settings.json from settings.base.json plus the
+# machine-local overlay (creating an empty overlay stub on first use).
+# Always overwrites; warns (but does not block) if the live settings.json
+# has changes since the last render that would be discarded.
+## Arguments:
+#   $1 - optional; pass "quiet-drift-warning" to suppress the "you have
+#        uncaptured changes" warning (used when capture_settings calls this
+#        after it has already handled, or deliberately skipped, every
+#        change -- re-warning at that point would just be confusing noise).
+render_settings() {
+  local mode="${1:-}"
+
+  print_section "RENDERING SETTINGS"
+
+  if [ ! -f "$BASE_SETTINGS_FILE" ]; then
+    printf "Error: base settings file not found: %s\n" "$BASE_SETTINGS_FILE" >&2
+    return 1
+  fi
+
+  if [ ! -f "$LOCAL_OVERLAY_FILE" ]; then
+    printf "No local overlay found, creating stub: %s\n" "$LOCAL_OVERLAY_FILE"
+    jq -n '{enabledPlugins: {}, extraKnownMarketplaces: {}}' \
+      >"$LOCAL_OVERLAY_FILE"
+    printf "This file is never version-controlled; see README.md for usage.\n"
+  fi
+
+  if [ "$mode" != "quiet-drift-warning" ] \
+    && [ -f "$SETTINGS_FILE" ] && [ -f "$RENDERED_SNAPSHOT_FILE" ] \
+    && ! diff -q "$SETTINGS_FILE" "$RENDERED_SNAPSHOT_FILE" >/dev/null 2>&1; then
+    printf "Warning: %s has changes since the last render\n" "$SETTINGS_FILE" >&2
+    printf "  (likely from toggling plugins in Claude Code).\n" >&2
+    printf "  Run 'claude-plugins capture' first to preserve them.\n" >&2
+    printf "  Proceeding to overwrite with the rendered result.\n" >&2
+  fi
+
+  if ! jq -s --sort-keys '.[0] * .[1]' \
+    "$BASE_SETTINGS_FILE" "$LOCAL_OVERLAY_FILE" >"$SETTINGS_FILE.tmp"; then
+    printf "Error: failed to render settings from %s + %s\n" \
+      "$BASE_SETTINGS_FILE" "$LOCAL_OVERLAY_FILE" >&2
+    rm -f "$SETTINGS_FILE.tmp"
+    return 1
+  fi
+
+  mv "$SETTINGS_FILE.tmp" "$SETTINGS_FILE"
+  cp "$SETTINGS_FILE" "$RENDERED_SNAPSHOT_FILE"
+
+  printf "Rendered: %s\n" "$SETTINGS_FILE"
+  printf "  base:          %s\n" "$BASE_SETTINGS_FILE"
+  printf "  local overlay: %s\n" "$LOCAL_OVERLAY_FILE"
+
+  return 0
+}
+
+# Read-only check: does the live settings.json match what render_settings
+# would produce right now? Used by verify; never creates the overlay stub
+# and never writes settings.json.
+verify_settings_render() {
+  print_section "CHECKING SETTINGS RENDER"
+
+  if [ ! -f "$BASE_SETTINGS_FILE" ]; then
+    printf "Error: base settings file not found: %s\n" "$BASE_SETTINGS_FILE" >&2
+    return 1
+  fi
+
+  local overlay="$LOCAL_OVERLAY_FILE"
+  local overlay_is_tmp=0
+  if [ ! -f "$overlay" ]; then
+    overlay=$(mktemp)
+    overlay_is_tmp=1
+    jq -n '{enabledPlugins: {}, extraKnownMarketplaces: {}}' >"$overlay"
+  fi
+
+  local expected
+  expected=$(jq -s --sort-keys '.[0] * .[1]' "$BASE_SETTINGS_FILE" "$overlay")
+
+  if [ "$overlay_is_tmp" -eq 1 ]; then
+    rm -f "$overlay"
+  fi
+
+  if [ ! -f "$SETTINGS_FILE" ]; then
+    printf "MISSING: %s has not been rendered yet\n" "$SETTINGS_FILE"
+    printf "Run 'claude-plugins render' or 'claude-plugins install' to fix.\n"
+    return 1
+  fi
+
+  local actual
+  actual=$(jq --sort-keys . "$SETTINGS_FILE")
+
+  if [ "$actual" = "$expected" ]; then
+    printf "OK: %s matches base + local overlay\n" "$SETTINGS_FILE"
+    return 0
+  else
+    printf "DRIFT: %s differs from what base + local overlay would render\n" \
+      "$SETTINGS_FILE"
+    printf "  (Expected if you toggled plugins in Claude Code and haven't\n"
+    printf "  run 'claude-plugins capture' yet.)\n"
+    return 1
+  fi
+}
+
+# Interactively routes live settings.json changes (since the last render)
+# into either settings.base.json (shared, synced) or the local overlay
+# (this machine only), then re-renders.
+capture_settings() {
+  print_section "CAPTURING LIVE SETTINGS CHANGES"
+
+  if [ ! -f "$SETTINGS_FILE" ]; then
+    printf "Error: %s not found. Run 'claude-plugins render' first.\n" \
+      "$SETTINGS_FILE" >&2
+    return 1
+  fi
+
+  if [ ! -f "$RENDERED_SNAPSHOT_FILE" ]; then
+    printf "Error: no rendered snapshot found: %s\n" \
+      "$RENDERED_SNAPSHOT_FILE" >&2
+    printf "Run 'claude-plugins render' first to establish a baseline.\n" >&2
+    return 1
+  fi
+
+  local changed
+  changed=$(
+    jq -n \
+      --slurpfile live "$SETTINGS_FILE" \
+      --slurpfile snap "$RENDERED_SNAPSHOT_FILE" \
+      -r '
+        def diffkeys(f):
+          (($live[0][f] // {})) as $l |
+          (($snap[0][f] // {})) as $s |
+          (($l | keys) + ($s | keys) | unique)[] |
+          select($l[.] != $s[.]) |
+          f + ":" + .;
+        diffkeys("enabledPlugins"), diffkeys("extraKnownMarketplaces")
+      '
+  )
+
+  if [ -z "$changed" ]; then
+    printf "OK: no live changes to capture; %s matches last render.\n" \
+      "$SETTINGS_FILE"
+    return 0
+  fi
+
+  printf "Found changes since last render:\n\n"
+
+  local change field key value destination
+  for change in $changed; do
+    field="${change%%:*}"
+    key="${change#*:}"
+    value=$(jq --arg f "$field" --arg k "$key" '.[$f][$k]' "$SETTINGS_FILE")
+
+    printf "  %s[%s] => %s\n" "$field" "$key" "$value"
+
+    destination=""
+    while true; do
+      printf "    Capture into [base/local/skip]? "
+      read -r destination </dev/tty 2>/dev/null || destination="skip"
+      case "$destination" in
+        base | local | skip) break ;;
+        *) printf "    Please answer base, local, or skip.\n" ;;
+      esac
+    done
+
+    case "$destination" in
+      base)
+        # shellcheck disable=SC2016
+        update_json_atomic "$BASE_SETTINGS_FILE" \
+          --arg f "$field" --arg k "$key" --argjson v "$value" \
+          '.[$f] = ((.[$f] // {}) + {($k): $v})'
+        printf "    -> captured into %s\n" "$BASE_SETTINGS_FILE"
+        ;;
+      local)
+        # shellcheck disable=SC2016
+        update_json_atomic "$LOCAL_OVERLAY_FILE" \
+          --arg f "$field" --arg k "$key" --argjson v "$value" \
+          '.[$f] = ((.[$f] // {}) + {($k): $v})'
+        printf "    -> captured into %s\n" "$LOCAL_OVERLAY_FILE"
+        ;;
+      skip)
+        printf "    -> skipped\n"
+        ;;
+    esac
+  done
+
+  printf "\n"
+  render_settings quiet-drift-warning
+}
+
+# Verifies known_marketplaces.json has the shape this script depends on.
+# A missing file is fine here; callers handle that separately.
+assert_known_marketplaces_schema() {
+  local file="$1"
+
+  if [ ! -f "$file" ]; then
+    return 0
+  fi
+
+  if ! jq -e '
+      type == "object"
+      and (to_entries | all(
+        (.value.installLocation != null)
+        and (.value.source.source != null)
+      ))
+    ' "$file" >/dev/null 2>&1; then
+    die "Unexpected shape in $file -- Claude Code's internal marketplace" \
+      "metadata format may have changed; claude-plugins needs to be" \
+      "reviewed before it can be trusted against this version of Claude Code."
+  fi
+}
+
+# Verifies installed_plugins.json has the shape this script depends on.
+# A missing file is fine here; callers handle that separately.
+assert_installed_plugins_schema() {
+  local file="$1"
+
+  if [ ! -f "$file" ]; then
+    return 0
+  fi
+
+  if ! jq -e '
+      has("plugins")
+      and (.plugins | type == "object")
+      and (.plugins | to_entries | all(
+        (.value | type == "array")
+        and (.value[0] | has("installPath"))
+      ))
+    ' "$file" >/dev/null 2>&1; then
+    die "Unexpected shape in $file -- Claude Code's internal plugin" \
+      "metadata format may have changed; claude-plugins needs to be" \
+      "reviewed before it can be trusted against this version of Claude Code."
+  fi
 }
 
 die() {

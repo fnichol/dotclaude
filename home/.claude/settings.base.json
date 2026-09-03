@@ -1,0 +1,17 @@
+{
+  "alwaysThinkingEnabled": true,
+  "cleanupPeriodDays": 90,
+  "enabledPlugins": {
+    "elements-of-style@superpowers-marketplace": true,
+    "obsidian@fnichol-plugins": true,
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "superpowers@fnichol-plugins": true,
+    "superpowers@superpowers-marketplace": false
+  },
+  "includeCoAuthoredBy": false,
+  "permissions": {
+    "deny": [
+      "Read(./.env)"
+    ]
+  }
+}
