@@ -1,20 +1,20 @@
 {
   "claude-plugins-official": {
-    "commit": "205b6e0b30366a969412d9aab7b99bea99d58db1",
+    "commit": "unknown",
     "repo": "anthropics/claude-plugins-official",
     "source": "github",
-    "updated": "2026-03-08"
+    "updated": "2026-11-19"
   },
   "fnichol-plugins": {
-    "commit": "fdd78296aee918d308e4d6571635a9eb0c5813a7",
+    "commit": "be50698fcf7956931d543571b4f84ccdc73a7e95",
     "repo": "fnichol/claude-code-plugins",
     "source": "github",
-    "updated": "2026-03-08"
+    "updated": "2026-11-19"
   },
   "superpowers-marketplace": {
-    "commit": "6934cf9addf96fff83ba25aeeb25b3cda7651958",
+    "commit": "5c9072877417873fee42be1805aa776a453ec394",
     "repo": "obra/superpowers-marketplace",
     "source": "github",
-    "updated": "2026-03-08"
+    "updated": "2026-11-19"
   }
 }
