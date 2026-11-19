@@ -6,6 +6,7 @@
       "Read(./.env)"
     ]
   },
+  "model": "opus",
   "enabledPlugins": {
     "superpowers@superpowers-marketplace": false,
     "elements-of-style@superpowers-marketplace": true,
@@ -13,5 +14,6 @@
     "obsidian@fnichol-plugins": true,
     "rust-analyzer-lsp@claude-plugins-official": true
   },
-  "alwaysThinkingEnabled": true
+  "alwaysThinkingEnabled": true,
+  "tui": "fullscreen"
 }
