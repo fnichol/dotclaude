@@ -8,7 +8,6 @@
   },
   "model": "opus",
   "enabledPlugins": {
-    "superpowers@superpowers-marketplace": false,
     "elements-of-style@superpowers-marketplace": true,
     "superpowers@fnichol-plugins": true,
     "obsidian@fnichol-plugins": true,
