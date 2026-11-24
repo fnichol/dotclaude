@@ -670,9 +670,15 @@ install_marketplaces() {
     indent printf "  To:   %s\n" "$expected_commit"
 
     if [ -d "$marketplace_dir/.git" ]; then
-      git -C "$marketplace_dir" fetch origin >/dev/null 2>&1 || {
-        warn "Could not fetch from origin" >&2
-      }
+      # Claude Code clones marketplaces shallow (depth 1), so a locked commit
+      # older than the clone's tip is usually missing: fetch it by SHA
+      if ! git -C "$marketplace_dir" cat-file -e "$expected_commit^{commit}" \
+        2>/dev/null; then
+        git -C "$marketplace_dir" fetch --depth 1 origin "$expected_commit" \
+          >/dev/null 2>&1 \
+          || git -C "$marketplace_dir" fetch origin >/dev/null 2>&1 \
+          || warn "Could not fetch $expected_commit from origin" >&2
+      fi
 
       if ! git -C "$marketplace_dir" reset --hard "$expected_commit" \
         >/dev/null 2>&1; then

@@ -1,0 +1,13 @@
+command: claude-plugins install
+exit: 0
+claude calls:
+  claude plugin remove p1@mkt-a
+  claude plugin install p1@mkt-a
+changes:
+@@ -149,5 +149,5 @@
+ }
+ == marketplace HEADs
+-mkt-a be3da4a7ee22030e2507a7fdd1c02d40437629f9
++mkt-a ec85228ffaa673ee6f7db40bc2cea994490e6408
+ mkt-b af7aaa489d19766098bd28b6bb80394573c8c1d0
+ == cache

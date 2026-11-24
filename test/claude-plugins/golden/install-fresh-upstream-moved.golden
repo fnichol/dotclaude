@@ -1,0 +1,114 @@
+command: claude-plugins install
+exit: 0
+claude calls:
+  claude plugin marketplace add owner/mkt-a
+  claude plugin marketplace add owner/mkt-b
+  claude plugin install p1@mkt-a
+  claude plugin install urlp@mkt-b
+changes:
+@@ -1,6 +1,48 @@
+ == .claude/settings.json
+-MISSING
++{
++  "enabledPlugins": {
++    "p1@mkt-a": true,
++    "p2@mkt-a": false,
++    "urlp@mkt-b": true
++  },
++  "extraKnownMarketplaces": {
++    "mkt-a": {
++      "source": {
++        "repo": "owner/mkt-a",
++        "source": "github"
++      }
++    },
++    "mkt-b": {
++      "source": {
++        "repo": "owner/mkt-b",
++        "source": "github"
++      }
++    }
++  },
++  "theme": "dark"
++}
+ == .claude/.settings.rendered.json
+-MISSING
++{
++  "enabledPlugins": {
++    "p1@mkt-a": true,
++    "p2@mkt-a": false,
++    "urlp@mkt-b": true
++  },
++  "extraKnownMarketplaces": {
++    "mkt-a": {
++      "source": {
++        "repo": "owner/mkt-a",
++        "source": "github"
++      }
++    },
++    "mkt-b": {
++      "source": {
++        "repo": "owner/mkt-b",
++        "source": "github"
++      }
++    }
++  },
++  "theme": "dark"
++}
+ == .claude/settings.base.json
+ {
+@@ -60,8 +102,52 @@
+ }
+ == .claude/plugins/known_marketplaces.json
+-MISSING
++{
++  "mkt-a": {
++    "installLocation": "@ROOT@/home/.claude/plugins/marketplaces/mkt-a",
++    "lastUpdated": "stub",
++    "source": {
++      "repo": "owner/mkt-a",
++      "source": "github"
++    }
++  },
++  "mkt-b": {
++    "installLocation": "@ROOT@/home/.claude/plugins/marketplaces/mkt-b",
++    "lastUpdated": "stub",
++    "source": {
++      "repo": "owner/mkt-b",
++      "source": "github"
++    }
++  }
++}
+ == .claude/plugins/installed_plugins.json
+-MISSING
++{
++  "plugins": {
++    "p1@mkt-a": [
++      {
++        "installPath": "@ROOT@/home/.claude/plugins/cache/mkt-a/p1/1.0.0",
++        "scope": "user",
++        "version": "1.0.0"
++      }
++    ],
++    "urlp@mkt-b": [
++      {
++        "gitCommitSha": "f18a937afc79f04d24dedc1907f5a1452fd99166",
++        "installPath": "@ROOT@/home/.claude/plugins/cache/mkt-b/urlp/f18a937afc79",
++        "scope": "user",
++        "version": "x"
++      }
++    ]
++  },
++  "version": 2
++}
+ == marketplace HEADs
++mkt-a ec85228ffaa673ee6f7db40bc2cea994490e6408
++mkt-b af7aaa489d19766098bd28b6bb80394573c8c1d0
+ == cache
++./mkt-a
++./mkt-a/p1
++./mkt-a/p1/1.0.0
++./mkt-b
++./mkt-b/urlp
++./mkt-b/urlp/f18a937afc79
+ == leftover temp files

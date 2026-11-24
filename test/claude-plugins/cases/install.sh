@@ -7,6 +7,15 @@ echo "# install"
 
 remove_marketplaces_lock() { rm "$ML"; }
 remove_plugins_lock() { rm "$PL"; }
+fresh_machine_upstream_moved() {
+  fresh_machine
+  upstream_commit mkt-a "a2"
+}
+# Claude Code moved the installed (shallow) mkt-a past its locked commit
+mkt_a_past_lock() {
+  upstream_commit mkt-a "a2"
+  stub plugin marketplace update mkt-a
+}
 
 snapshot_case install-synced noop install
 snapshot_case install-fresh fresh_machine install
@@ -18,6 +27,8 @@ snapshot_case install-plugin-not-installed uninstall_urlp install
 snapshot_case install-no-mlock remove_marketplaces_lock install
 snapshot_case install-no-plock remove_plugins_lock install
 snapshot_case install-plugin-mismatch lock_wrong_urlp_commit install
+snapshot_case install-fresh-upstream-moved fresh_machine_upstream_moved install
+snapshot_case install-mkt-past-lock mkt_a_past_lock install
 
 begin synced
 run install
@@ -120,6 +131,28 @@ lock_wrong_urlp_commit
 run install
 assert_contains "URL plugin at the wrong commit is reinstalled" "$CALLS" \
   "claude plugin install urlp@mkt-b"
+
+# Regression: Claude Code clones marketplaces shallow (depth 1), so a locked
+# commit behind upstream was missing and `git reset` to it failed
+begin fresh-marketplace-behind-upstream
+fresh_machine_upstream_moved
+run install
+assert_eq "exits 0" "$EC" 0
+assert_not_contains "no reset failure" "$OUTPUT" "Could not reset"
+assert_eq "mkt-a is pinned to its older locked commit" \
+  "$(local_head "$CP/marketplaces/mkt-a")" "$(lock_commit "$ML" mkt-a)"
+assert_eq "the clone stays shallow" \
+  "$(git -C "$CP/marketplaces/mkt-a" rev-parse --is-shallow-repository)" true
+run verify
+assert_eq "verify afterwards passes" "$EC" 0
+
+begin marketplace-past-lock
+mkt_a_past_lock
+run install
+assert_eq "exits 0" "$EC" 0
+assert_eq "mkt-a is moved back to its locked commit" \
+  "$(local_head "$CP/marketplaces/mkt-a")" "$(lock_commit "$ML" mkt-a)"
+assert_contains "its local plugin is refreshed" "$CALLS" "claude plugin install p1@mkt-a"
 
 begin missing-marketplaces-lock
 remove_marketplaces_lock

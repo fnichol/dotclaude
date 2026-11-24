@@ -3,7 +3,8 @@
 # for claude-plugins. It writes known_marketplaces.json and installed_plugins.json
 # in the same shape real Claude Code does:
 #
-# - A marketplace "owner/<name>" is cloned from "$REMOTES/<name>.git", unless
+# - A marketplace "owner/<name>" is cloned shallow (depth 1, as Claude Code
+#   does) from "$REMOTES/<name>.git", unless
 #   "$REMOTES/<name>.snapshot" exists: then it is installed as a snapshot, like
 #   Claude Code does for claude-plugins-official (no .git, commit in .gcs-sha).
 # - A local plugin (string source) is copied out of its marketplace and gets no
@@ -52,7 +53,7 @@ case "${1:-} ${2:-}" in
         if [ -f "$REMOTES/$name.snapshot" ]; then
           write_snapshot "$name" "$dir"
         else
-          git clone -q "$REMOTES/$name.git" "$dir"
+          git clone -q --depth 1 "file://$REMOTES/$name.git" "$dir"
         fi
         update_json "$known" \
           --arg n "$name" --arg r "$repo" --arg d "$dir" \
