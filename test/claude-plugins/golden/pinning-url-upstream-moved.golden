@@ -1,0 +1,23 @@
+command: claude-plugins install
+exit: 0
+claude calls:
+  claude plugin install urlp@mkt-b
+changes:
+@@ -136,4 +136,12 @@
+         "version": "2.0.0"
+       }
++    ],
++    "urlp@mkt-b": [
++      {
++        "gitCommitSha": "34b0cbd017e61466d15cac4f83aee3f7d3b1db6e",
++        "installPath": "@ROOT@/home/.claude/plugins/cache/mkt-b/urlp/34b0cbd017e6",
++        "scope": "user",
++        "version": "x"
++      }
+     ]
+   },
+@@ -151,3 +159,4 @@
+ ./mkt-b
+ ./mkt-b/urlp
++./mkt-b/urlp/34b0cbd017e6
+ == leftover temp files

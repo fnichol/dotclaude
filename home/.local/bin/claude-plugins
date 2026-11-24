@@ -52,6 +52,10 @@ declare_globals() {
   # run, used to refresh local plugins that are copied from them
   _MOVED_MARKETPLACES=""
 
+  # Count of marketplaces and plugins install could not put at their locked
+  # commit, so its summary doesn't claim everything matches
+  _UNPINNED_COUNT=0
+
   # Top-level settings that Claude Code itself changes as you use it (e.g.
   # switching models). Rendering keeps their live value from settings.json,
   # falling back to base + overlay, and drift checks ignore them, so they never
@@ -261,9 +265,15 @@ cmd_install() {
 
   install_plugins || exit_code=1
 
+  local success_message="Marketplace and plugin sync completed successfully
+All installations now match lock file versions."
+  if [ "$_UNPINNED_COUNT" -gt 0 ]; then
+    success_message="Marketplace and plugin sync completed
+$_UNPINNED_COUNT could not be put at their locked versions (see warnings above)"
+  fi
+
   print_summary "$exit_code" \
-    "Marketplace and plugin sync completed successfully
-All installations now match lock file versions." \
+    "$success_message" \
     "Some errors occurred during sync
 Some installations may not match lock file versions."
 
@@ -549,11 +559,24 @@ get_plugin_source_from_marketplace() {
   fi
 }
 
+# Prints the commit at a remote's HEAD, or "unknown" when it can't be reached.
+# Never prompts: credential and SSH passphrase prompts are disabled.
 get_remote_git_commit() {
   local url="$1"
 
-  git ls-remote "$url" HEAD 2>/dev/null \
-    | awk '{print $1}' || printf "unknown"
+  local ssh_command="${GIT_SSH_COMMAND:-}"
+  if [ -z "$ssh_command" ] && ! git config core.sshCommand >/dev/null 2>&1; then
+    ssh_command="ssh -o BatchMode=yes"
+  fi
+
+  local commit
+  commit="$(
+    GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$ssh_command" \
+      git ls-remote "$url" HEAD 2>/dev/null \
+      | awk 'NR == 1 {print $1}'
+  )"
+
+  printf "%s" "${commit:-unknown}"
 }
 
 install_marketplaces() {
@@ -704,6 +727,7 @@ install_marketplaces() {
       if [ "$current_commit" != "$expected_commit" ]; then
         warn "Cannot pin $marketplace_name to $expected_commit: Claude Code installs it as a snapshot, now at $current_commit" >&2
         warn "Run 'claude-plugins update' to lock the current snapshot" >&2
+        _UNPINNED_COUNT=$((_UNPINNED_COUNT + 1))
         marketplace_skipped_count=$((marketplace_skipped_count + 1))
         continue
       fi
@@ -722,6 +746,24 @@ install_marketplaces() {
   indent printf "Marketplace sync complete!\n"
 
   return "$exit_code"
+}
+
+# report_installed_plugin <name> <key> <expected-commit>: prints the commit a
+# just-installed plugin landed on, warning when it is not the locked one
+# (Claude Code installs a plugin at its source's current commit, which this
+# script cannot pin)
+report_installed_plugin() {
+  local plugin_name="$1" plugin_key="$2" expected_commit="$3"
+
+  local installed_commit
+  installed_commit="$(installed_plugin_commit "$plugin_key")"
+  indent printf "  @ %s\n" "$installed_commit"
+
+  if [ "$installed_commit" != "$expected_commit" ]; then
+    warn "$plugin_name installed at $installed_commit, not its locked $expected_commit" >&2
+    warn "Run 'claude-plugins update' to lock what is installed" >&2
+    _UNPINNED_COUNT=$((_UNPINNED_COUNT + 1))
+  fi
 }
 
 install_plugins() {
@@ -804,10 +846,18 @@ install_plugins() {
       # follows the marketplace, so reinstalling can never move it to a
       # different commit. Refresh the copy only when this run moved its
       # marketplace.
+      # A local plugin is refreshed when this run moved its marketplace, or
+      # when its marketplace is already at the locked commit but the copy is
+      # not (reinstalling copies the marketplace's current version)
       local follows=false refresh=false
       if plugin_follows_marketplace "$installed_plugin_key"; then
         follows=true
         if marketplace_moved "${installed_plugin_key##*@}"; then
+          refresh=true
+        elif [ "$actual_commit" != "unknown" ] \
+          && [ "$actual_commit" != "$expected_commit" ] \
+          && [ "$(marketplace_current_commit "${installed_plugin_key##*@}")" \
+            = "$expected_commit" ]; then
           refresh=true
         fi
       fi
@@ -841,7 +891,7 @@ install_plugins() {
           exit_code=1
           continue
         fi
-        indent printf "  @ %s\n" "$expected_commit"
+        report_installed_plugin "$plugin_name" "$plugin_key" "$expected_commit"
         plugin_synced_count=$((plugin_synced_count + 1))
       fi
     else
@@ -856,8 +906,7 @@ install_plugins() {
         continue
       fi
 
-      # Plugin installed from marketplace at its current commit
-      indent printf "  @ %s\n" "$expected_commit"
+      report_installed_plugin "$plugin_name" "$plugin_key" "$expected_commit"
       plugin_synced_count=$((plugin_synced_count + 1))
     fi
   done
@@ -1057,9 +1106,23 @@ plan_plugin_lock_changes() {
   done
 }
 
+# True when a plugin is copied out of its marketplace (a local source in the
+# marketplace's marketplace.json) rather than cloned from its own URL, so it can
+# only ever be at its marketplace's commit
 plugin_follows_marketplace() {
   local plugin_key="$1"
 
+  local source
+  source="$(
+    get_plugin_source_from_marketplace "${plugin_key%@*}" "${plugin_key##*@}"
+  )"
+
+  case "$source" in
+    local) return 0 ;;
+    "url "*) return 1 ;;
+  esac
+
+  # The marketplace is unavailable: fall back to what Claude Code recorded
   local installed_plugins_file="$_INSTALLED_PLUGINS_FILE_PATH"
 
   if ! jq -e \
@@ -1078,6 +1141,23 @@ plugin_follows_marketplace() {
   )"
 
   [ ! -d "$install_path/.git" ]
+}
+
+# Prints the commit an installed marketplace is currently at
+marketplace_current_commit() {
+  local marketplace_dir
+  marketplace_dir="$(
+    jq -r \
+      --arg name "$1" \
+      '.[$name].installLocation // empty' \
+      "$_KNOWN_MARKETPLACES_FILE_PATH" 2>/dev/null
+  )"
+
+  if [ -n "$marketplace_dir" ] && [ -d "$marketplace_dir" ]; then
+    get_marketplace_commit "$marketplace_dir"
+  else
+    printf "unknown"
+  fi
 }
 
 plugin_is_installed() {
@@ -1497,8 +1577,9 @@ update_plugin_versions() {
         local remote_commit
         remote_commit="$(get_remote_git_commit "$remote_url")"
 
-        if [ "$remote_commit" != "unknown" ] \
-          && [ "$remote_commit" != "$commit" ]; then
+        if [ "$remote_commit" = "unknown" ]; then
+          warn "Could not check $remote_url for a newer $plugin_name; keeping $commit" >&2
+        elif [ "$remote_commit" != "$commit" ]; then
           indent printf "Updating: %s (URL-sourced plugin has newer version)\n" "$plugin_name"
           indent printf "  From: %s\n" "$commit"
           indent printf "  To:   %s\n" "$remote_commit"

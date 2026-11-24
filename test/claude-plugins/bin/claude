@@ -8,7 +8,9 @@
 #   "$REMOTES/<name>.snapshot" exists: then it is installed as a snapshot, like
 #   Claude Code does for claude-plugins-official (no .git, commit in .gcs-sha).
 # - A local plugin (string source) is copied out of its marketplace and gets no
-#   gitCommitSha, while a URL plugin is cloned and records its gitCommitSha.
+#   gitCommitSha (older Claude Code), or its marketplace's commit when
+#   "$REMOTES/.local-plugin-sha" exists (newer Claude Code). A URL plugin is
+#   cloned and records its gitCommitSha.
 #
 # Every invocation is appended to "$STUB_LOG" so tests can assert on calls.
 set -euo pipefail
@@ -100,6 +102,14 @@ case "${1:-} ${2:-}" in
       cp -R "$dir/${relative#./}/." "$path/"
       entry="$(jq -n --arg p "$path" --arg v "$version" \
         '{scope: "user", installPath: $p, version: $v}')"
+      if [ -f "$REMOTES/.local-plugin-sha" ]; then
+        if [ -d "$dir/.git" ]; then
+          sha="$(git -C "$dir" rev-parse HEAD)"
+        else
+          sha="$(cat "$dir/.gcs-sha")"
+        fi
+        entry="$(echo "$entry" | jq --arg s "$sha" '.gitCommitSha = $s')"
+      fi
     fi
 
     update_json "$installed" --arg k "$key" --argjson e "$entry" '.plugins[$k] = [$e]'
