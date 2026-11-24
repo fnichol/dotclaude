@@ -1,0 +1,4 @@
+command: claude-plugins render
+exit: 0
+claude calls:
+changes:

@@ -1,0 +1,6 @@
+command: claude-plugins update
+exit: 0
+claude calls:
+  claude plugin marketplace update mkt-a
+  claude plugin marketplace update mkt-b
+changes:

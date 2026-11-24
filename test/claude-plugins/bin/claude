@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Test stub of the `claude` CLI, implementing just enough of `claude plugin ...`
+# for claude-plugins. It writes known_marketplaces.json and installed_plugins.json
+# in the same shape real Claude Code does:
+#
+# - A marketplace "owner/<name>" is cloned from "$REMOTES/<name>.git".
+# - A local plugin (string source) is copied out of its marketplace and gets no
+#   gitCommitSha, while a URL plugin is cloned and records its gitCommitSha.
+#
+# Every invocation is appended to "$STUB_LOG" so tests can assert on calls.
+set -euo pipefail
+
+echo "claude $*" >>"$STUB_LOG"
+
+plugins_dir="$HOME/.claude/plugins"
+known="$plugins_dir/known_marketplaces.json"
+installed="$plugins_dir/installed_plugins.json"
+
+mkdir -p "$plugins_dir"
+[ -f "$known" ] || echo '{}' >"$known"
+[ -f "$installed" ] || echo '{"version":2,"plugins":{}}' >"$installed"
+
+update_json() {
+  local file="$1"
+  shift
+  jq "$@" "$file" >"$file.stub" && mv "$file.stub" "$file"
+}
+
+marketplace_dir() {
+  jq -r --arg n "$1" '.[$n].installLocation // empty' "$known"
+}
+
+case "${1:-} ${2:-}" in
+  "plugin marketplace")
+    case "${3:-}" in
+      add)
+        repo="$4"
+        name="${repo##*/}"
+        dir="$plugins_dir/marketplaces/$name"
+        [ -d "$REMOTES/$name.git" ] || exit 1
+        git clone -q "$REMOTES/$name.git" "$dir"
+        update_json "$known" \
+          --arg n "$name" --arg r "$repo" --arg d "$dir" \
+          '.[$n] = {source: {source: "github", repo: $r}, installLocation: $d, lastUpdated: "stub"}'
+        ;;
+      update)
+        dir="$(marketplace_dir "$4")"
+        git -C "$dir" fetch -q origin
+        git -C "$dir" reset -q --hard origin/HEAD
+        ;;
+      *)
+        exit 2
+        ;;
+    esac
+    ;;
+  "plugin install")
+    key="$3"
+    name="${key%@*}"
+    marketplace="${key#*@}"
+    dir="$(marketplace_dir "$marketplace")"
+    [ -n "$dir" ] || exit 1
+    manifest="$dir/.claude-plugin/marketplace.json"
+    source="$(jq -c --arg n "$name" '.plugins[] | select(.name == $n) | .source' "$manifest")"
+    [ -n "$source" ] || exit 1
+
+    if echo "$source" | jq -e 'type == "object"' >/dev/null; then
+      url="$(echo "$source" | jq -r .url)"
+      sha="$(git ls-remote "$url" HEAD | awk '{print $1}')"
+      path="$plugins_dir/cache/$marketplace/$name/${sha:0:12}"
+      rm -rf "$path"
+      git clone -q "$url" "$path"
+      entry="$(jq -n --arg p "$path" --arg s "$sha" \
+        '{scope: "user", installPath: $p, version: "x", gitCommitSha: $s}')"
+    else
+      version="$(jq -r --arg n "$name" \
+        '.plugins[] | select(.name == $n) | .version // "1.0.0"' "$manifest")"
+      relative="$(echo "$source" | jq -r .)"
+      path="$plugins_dir/cache/$marketplace/$name/$version"
+      mkdir -p "$path"
+      cp -R "$dir/${relative#./}/." "$path/"
+      entry="$(jq -n --arg p "$path" --arg v "$version" \
+        '{scope: "user", installPath: $p, version: $v}')"
+    fi
+
+    update_json "$installed" --arg k "$key" --argjson e "$entry" '.plugins[$k] = [$e]'
+    ;;
+  "plugin remove")
+    key="$3"
+    path="$(jq -r --arg k "$key" '.plugins[$k][0].installPath // empty' "$installed")"
+    [ -n "$path" ] || exit 1
+    rm -rf "$path"
+    update_json "$installed" --arg k "$key" 'del(.plugins[$k])'
+    ;;
+  *)
+    exit 2
+    ;;
+esac

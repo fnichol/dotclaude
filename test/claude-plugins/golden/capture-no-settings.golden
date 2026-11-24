@@ -1,0 +1,4 @@
+command: claude-plugins capture
+exit: 1
+claude calls:
+changes:

@@ -1,0 +1,25 @@
+command: claude-plugins capture
+exit: 0
+claude calls:
+changes:
+@@ -3,7 +3,6 @@
+   "enabledPlugins": {
+     "p1@mkt-a": true,
+-    "p2@mkt-a": true,
+-    "urlp@mkt-b": true,
+-    "x@mkt-z": true
++    "p2@mkt-a": false,
++    "urlp@mkt-b": true
+   },
+   "extraKnownMarketplaces": {
+@@ -17,10 +16,4 @@
+       "source": {
+         "repo": "owner/mkt-b",
+-        "source": "github"
+-      }
+-    },
+-    "mkt-c": {
+-      "source": {
+-        "repo": "owner/mkt-c",
+         "source": "github"
+       }

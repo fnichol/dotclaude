@@ -1,0 +1,6 @@
+command: claude-plugins install
+exit: 0
+claude calls:
+  claude plugin remove urlp@mkt-b
+  claude plugin install urlp@mkt-b
+changes:

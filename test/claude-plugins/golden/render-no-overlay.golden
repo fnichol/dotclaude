@@ -1,0 +1,14 @@
+command: claude-plugins render
+exit: 0
+claude calls:
+changes:
+@@ -69,5 +69,8 @@
+ }
+ == .claude/settings.local-overlay.json
+-MISSING
++{
++  "enabledPlugins": {},
++  "extraKnownMarketplaces": {}
++}
+ == .claude/plugins/.marketplaces.lock.json
+ {

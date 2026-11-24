@@ -1,0 +1,4 @@
+command: claude-plugins install
+exit: 1
+claude calls:
+changes:

@@ -1,0 +1,4 @@
+command: claude-plugins help
+exit: 0
+claude calls:
+changes:

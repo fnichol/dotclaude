@@ -1,0 +1,11 @@
+command: claude-plugins render
+exit: 0
+claude calls:
+changes:
+@@ -3,5 +3,5 @@
+   "enabledPlugins": {
+     "p1@mkt-a": true,
+-    "p2@mkt-a": true,
++    "p2@mkt-a": false,
+     "urlp@mkt-b": true
+   },

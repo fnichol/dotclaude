@@ -1,0 +1,4 @@
+command: claude-plugins bogus
+exit: 1
+claude calls:
+changes:

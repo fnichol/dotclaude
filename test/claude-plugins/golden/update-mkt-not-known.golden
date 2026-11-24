@@ -1,0 +1,13 @@
+command: claude-plugins update
+exit: 0
+claude calls:
+  claude plugin marketplace update mkt-a
+  claude plugin marketplace update mkt-b
+changes:
+@@ -82,5 +82,5 @@
+   },
+   "mkt-b": {
+-    "commit": "af7aaa489d19766098bd28b6bb80394573c8c1d0",
++    "commit": "unknown",
+     "repo": "owner/mkt-b",
+     "source": "github",

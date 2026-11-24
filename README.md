@@ -38,6 +38,7 @@ A personal set of Claude Code configuration for syncing across multiple systems.
 - [Repository Structure](#repository-structure)
 - [Issues](#issues)
 - [Contributing](#contributing)
+  - [Testing](#testing)
 - [Authors](#authors)
 - [License](#license)
 
@@ -332,6 +333,13 @@ dotclaude/
 ├── LICENSE.txt             # License file
 ├── Makefile                # Build automation
 ├── README.md               # This file
+├── test/
+│   └── claude-plugins/     # Test suite for claude-plugins (make test)
+│       ├── run.sh          # Test runner
+│       ├── lib.sh          # Sandbox, fixture, and assertion helpers
+│       ├── bin/claude      # Stub claude CLI used by the tests
+│       ├── cases/          # Test cases, one file per area
+│       └── golden/         # Recorded golden snapshots
 ├── vendor/
 │   └── mk/                 # Vendored Makefile utilities
 │       ├── base.mk
@@ -367,6 +375,27 @@ issue](https://github.com/fnichol/dotclaude/issues), especially for more
 ambitious contributions. This gives other contributors a chance to point you in
 the right direction, give you feedback on your design, and help you find out if
 someone else is working on the same thing.
+
+### Testing
+
+`make test` runs the `claude-plugins` test suite in `test/claude-plugins/`. It
+needs `bash`, `git`, and `jq` (plus `expect` for the interactive `capture`
+tests, which are skipped without it). Every test runs against a throwaway
+sandbox with a fake `$HOME`, local git repositories standing in for GitHub
+marketplaces, and a stub `claude` CLI, so your real `~/.claude` is never
+touched.
+
+```sh
+make test                                  # whole suite
+test/claude-plugins/run.sh install verify  # selected case files
+UPDATE_GOLDEN=1 test/claude-plugins/run.sh # re-record golden files
+```
+
+Tests in `cases/*.sh` are either assertions or golden snapshots. A golden
+snapshot records a command's exit code, the `claude` calls it made, and exactly
+what it changed on disk, in `golden/*.golden`. When a behavior change is
+intended, re-record with `UPDATE_GOLDEN=1` and review the golden diff before
+committing it.
 
 ## Authors
 

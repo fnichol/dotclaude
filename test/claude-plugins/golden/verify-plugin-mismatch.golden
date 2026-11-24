@@ -1,0 +1,4 @@
+command: claude-plugins verify
+exit: 1
+claude calls:
+changes:

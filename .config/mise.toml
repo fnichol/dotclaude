@@ -1,0 +1,5 @@
+[settings]
+cargo.binstall_native = true
+
+[tools]
+"cargo:shuck-cli" = "0.2.11"

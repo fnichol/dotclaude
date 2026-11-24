@@ -1,0 +1,37 @@
+command: claude-plugins install
+exit: 0
+claude calls:
+changes:
+@@ -4,4 +4,5 @@
+     "p1@mkt-a": true,
+     "p2@mkt-a": false,
++    "pc@mkt-c": true,
+     "urlp@mkt-b": true
+   },
+@@ -27,4 +28,5 @@
+     "p1@mkt-a": true,
+     "p2@mkt-a": false,
++    "pc@mkt-c": true,
+     "urlp@mkt-b": true
+   },
+@@ -87,4 +89,10 @@
+     "source": "github",
+     "updated": "@TODAY@"
++  },
++  "mkt-c": {
++    "commit": "72f3bdb368c3a9ce70c692adcf94195ab52fcded",
++    "repo": "owner/mkt-c",
++    "source": "github",
++    "updated": "@TODAY@"
+   }
+ }
+@@ -94,4 +102,9 @@
+     "commit": "ec85228ffaa673ee6f7db40bc2cea994490e6408",
+     "marketplace": "mkt-a",
++    "updated": "@TODAY@"
++  },
++  "pc": {
++    "commit": "72f3bdb368c3a9ce70c692adcf94195ab52fcded",
++    "marketplace": "mkt-c",
+     "updated": "@TODAY@"
+   },

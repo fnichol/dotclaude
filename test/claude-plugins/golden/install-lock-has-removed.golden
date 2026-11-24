@@ -1,0 +1,14 @@
+command: claude-plugins install
+exit: 0
+claude calls:
+changes:
+@@ -90,9 +90,4 @@
+ == .claude/plugins/.plugins.lock.json
+ {
+-  "ghostp": {
+-    "commit": "abc",
+-    "marketplace": "mkt-a",
+-    "updated": "x"
+-  },
+   "p1": {
+     "commit": "ec85228ffaa673ee6f7db40bc2cea994490e6408",
