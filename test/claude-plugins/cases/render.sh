@@ -31,8 +31,9 @@ assert_eq "creates an empty overlay stub" "$(jq -c . "$OVERLAY")" \
 begin live-drift
 drift_live_settings
 run render
-assert_contains "warns about uncaptured live changes" "$OUTPUT" \
-  "settings has changes since the last render"
+assert_contains "warns about uncaptured live changes, naming the keys" "$OUTPUT" \
+  "settings has changes since the last render in: enabledPlugins"
+assert_not_contains "without a redundant 'Warning:' prefix" "$OUTPUT" "Warning:"
 assert_eq "overwrites live changes with the render" \
   "$(jq '.enabledPlugins["p2@mkt-a"]' "$SETTINGS")" false
 

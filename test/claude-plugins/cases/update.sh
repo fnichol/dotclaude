@@ -55,8 +55,9 @@ begin enabled-plugin-not-installed
 uninstall_urlp
 run update
 assert_eq "its lock entry is kept" "$(json_keys "$PL")" "p1,urlp"
-assert_contains "warns that it was kept" "$OUTPUT" \
-  "Keeping urlp - enabled but not installed on this machine"
+assert_contains "reports that it was kept" "$OUTPUT" \
+  "Keeping urlp - enabled but not installed on this machine (run 'claude-plugins install')"
+assert_not_contains "as information, not a warning" "$OUTPUT" "!!! Keeping"
 
 begin missing-marketplaces-lock
 remove_marketplaces_lock

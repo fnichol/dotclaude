@@ -159,5 +159,7 @@ remove_marketplaces_lock
 run install
 assert_eq "exits 1" "$EC" 1
 assert_contains "reports the missing lock" "$OUTPUT" "Marketplaces lock file not found"
+assert_contains "says to restore it rather than run update" "$OUTPUT" \
+  "It is version-controlled; restore it from your dotfiles"
 
 finish

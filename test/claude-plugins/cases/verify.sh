@@ -99,6 +99,25 @@ run verify
 assert_eq "exits 1" "$EC" 1
 assert_contains "reports plugin mismatch" "$OUTPUT" "Mismatch: urlp"
 
+# Regression: verify passed when nothing was installed at all
+begin nothing-installed
+remove_marketplaces_dir
+remove_cache
+run verify
+assert_eq "verify fails when nothing is installed" "$EC" 1
+assert_contains "locked marketplaces are reported missing" "$OUTPUT" "Missing: mkt-a"
+assert_contains "locked plugins are reported missing" "$OUTPUT" "Missing: p1"
+assert_contains "points at install for marketplaces and plugins" "$OUTPUT" \
+  "Run 'claude-plugins install' to fix."
+assert_not_contains "does not suggest update to fix the machine" "$OUTPUT" \
+  "Run 'claude-plugins update' to fix"
+
+begin settings-drift-names-keys
+drift_live_settings
+run verify
+assert_contains "settings drift names the changed keys" "$OUTPUT" \
+  "would render in: enabledPlugins"
+
 begin read-only
 cp -R "$H" "$ROOT/home-before"
 lock_ghost_marketplace

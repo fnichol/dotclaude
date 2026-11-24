@@ -56,6 +56,10 @@ declare_globals() {
   # commit, so its summary doesn't claim everything matches
   _UNPINNED_COUNT=0
 
+  # Count of snapshot marketplaces (and plugins from them) that install found
+  # ahead of their lock: Claude Code keeps these current itself
+  _SNAPSHOT_UPDATED_COUNT=0
+
   # Top-level settings that Claude Code itself changes as you use it (e.g.
   # switching models). Rendering keeps their live value from settings.json,
   # falling back to base + overlay, and drift checks ignore them, so they never
@@ -270,6 +274,10 @@ All installations now match lock file versions."
   if [ "$_UNPINNED_COUNT" -gt 0 ]; then
     success_message="Marketplace and plugin sync completed
 $_UNPINNED_COUNT could not be put at their locked versions (see warnings above)"
+  elif [ "$_SNAPSHOT_UPDATED_COUNT" -gt 0 ]; then
+    success_message="Marketplace and plugin sync completed successfully
+All installations match lock file versions, except $_SNAPSHOT_UPDATED_COUNT
+kept current by Claude Code (snapshot marketplaces)."
   fi
 
   print_summary "$exit_code" \
@@ -587,12 +595,13 @@ install_marketplaces() {
 
   if [ ! -f "$lock_file" ]; then
     warn "Marketplaces lock file not found: $lock_file" >&2
-    warn "Run 'claude-plugins update' first to create it" >&2
+    warn "It is version-controlled; restore it from your dotfiles" >&2
     return 1
   fi
 
   local marketplace_synced_count=0
   local marketplace_skipped_count=0
+  local marketplace_updated_count=0
   local marketplace_names
   local exit_code=0
 
@@ -724,11 +733,15 @@ install_marketplaces() {
         mark_marketplace_moved "$marketplace_name"
       fi
 
-      if [ "$current_commit" != "$expected_commit" ]; then
-        warn "Cannot pin $marketplace_name to $expected_commit: Claude Code installs it as a snapshot, now at $current_commit" >&2
-        warn "Run 'claude-plugins update' to lock the current snapshot" >&2
+      if [ "$current_commit" = "unknown" ]; then
+        warn "Could not read the snapshot commit of $marketplace_name" >&2
         _UNPINNED_COUNT=$((_UNPINNED_COUNT + 1))
         marketplace_skipped_count=$((marketplace_skipped_count + 1))
+        continue
+      elif [ "$current_commit" != "$expected_commit" ]; then
+        info "Updated: $marketplace_name @ $current_commit (snapshot kept current by Claude Code; locked $expected_commit)"
+        _SNAPSHOT_UPDATED_COUNT=$((_SNAPSHOT_UPDATED_COUNT + 1))
+        marketplace_updated_count=$((marketplace_updated_count + 1))
         continue
       fi
     fi
@@ -742,6 +755,8 @@ install_marketplaces() {
   indent printf "Lock file: %s\n" "$lock_file"
   indent printf "Synced:  %d\n" "$marketplace_synced_count"
   indent printf "Skipped: %d\n" "$marketplace_skipped_count"
+  indent printf "Updated: %d (snapshots kept current by Claude Code)\n" \
+    "$marketplace_updated_count"
   printf "\n"
   indent printf "Marketplace sync complete!\n"
 
@@ -759,7 +774,12 @@ report_installed_plugin() {
   installed_commit="$(installed_plugin_commit "$plugin_key")"
   indent printf "  @ %s\n" "$installed_commit"
 
-  if [ "$installed_commit" != "$expected_commit" ]; then
+  if [ "$installed_commit" != "$expected_commit" ] \
+    && [ "$installed_commit" != "unknown" ] \
+    && marketplace_is_snapshot "${plugin_key##*@}"; then
+    info "Updated: $plugin_name (from snapshot marketplace ${plugin_key##*@}, kept current by Claude Code; locked $expected_commit)"
+    _SNAPSHOT_UPDATED_COUNT=$((_SNAPSHOT_UPDATED_COUNT + 1))
+  elif [ "$installed_commit" != "$expected_commit" ]; then
     warn "$plugin_name installed at $installed_commit, not its locked $expected_commit" >&2
     warn "Run 'claude-plugins update' to lock what is installed" >&2
     _UNPINNED_COUNT=$((_UNPINNED_COUNT + 1))
@@ -860,6 +880,15 @@ install_plugins() {
             = "$expected_commit" ]; then
           refresh=true
         fi
+      fi
+
+      if [ "$refresh" = false ] \
+        && [ "$actual_commit" != "$expected_commit" ] \
+        && [ "$actual_commit" != "unknown" ] \
+        && marketplace_is_snapshot "${installed_plugin_key##*@}"; then
+        info "Updated: $plugin_name @ $actual_commit (from snapshot marketplace ${installed_plugin_key##*@}, kept current by Claude Code; locked $expected_commit)"
+        _SNAPSHOT_UPDATED_COUNT=$((_SNAPSHOT_UPDATED_COUNT + 1))
+        continue
       fi
 
       if [ "$refresh" = false ] \
@@ -1143,6 +1172,25 @@ plugin_follows_marketplace() {
   [ ! -d "$install_path/.git" ]
 }
 
+# True when a marketplace directory is a snapshot install (no git checkout, its
+# commit recorded in .gcs-sha), which Claude Code keeps current on its own
+is_snapshot_dir() {
+  [ -d "$1" ] && [ ! -d "$1/.git" ] && [ -s "$1/.gcs-sha" ]
+}
+
+# True when an installed marketplace, by name, is a snapshot install
+marketplace_is_snapshot() {
+  local marketplace_dir
+  marketplace_dir="$(
+    jq -r \
+      --arg name "$1" \
+      '.[$name].installLocation // empty' \
+      "$_KNOWN_MARKETPLACES_FILE_PATH" 2>/dev/null
+  )"
+
+  [ -n "$marketplace_dir" ] && is_snapshot_dir "$marketplace_dir"
+}
+
 # Prints the commit an installed marketplace is currently at
 marketplace_current_commit() {
   local marketplace_dir
@@ -1207,14 +1255,25 @@ render_settings_json() {
         if $current | has($key) then .[$key] = $current[$key] else . end)'
 }
 
+# changed_settings_keys <file> <file>: prints the top-level keys (comma
+# separated) whose values differ between two settings files, ignoring the live
+# settings keys
+changed_settings_keys() {
+  # shellcheck disable=SC2016
+  jq -n -r \
+    --slurpfile a "$1" \
+    --slurpfile b "$2" \
+    --argjson live_keys "$_LIVE_SETTINGS_KEYS" \
+    '$a[0] as $x | $b[0] as $y
+    | [(($x | keys) + ($y | keys)) | unique[] | select($x[.] != $y[.])]
+    - $live_keys
+    | join(", ")'
+}
+
 # settings_differ <file> <file>: true if two settings files differ in anything
 # other than the live settings keys
 settings_differ() {
-  # shellcheck disable=SC2016
-  local filter='delpaths([$keys[] | [.]])'
-
-  [ "$(jq -S --argjson keys "$_LIVE_SETTINGS_KEYS" "$filter" "$1")" \
-    != "$(jq -S --argjson keys "$_LIVE_SETTINGS_KEYS" "$filter" "$2")" ]
+  [ -n "$(changed_settings_keys "$1" "$2")" ]
 }
 
 render_settings() {
@@ -1242,8 +1301,8 @@ render_settings() {
   if [ "$mode" != "quiet-drift-warning" ] \
     && [ -f "$settings" ] && [ -f "$rendered_snapshot" ] \
     && settings_differ "$settings" "$rendered_snapshot"; then
-    warn "Warning: settings has changes since the last render" >&2
-    warn "(likely from toggling plugins in Claude Code)." >&2
+    warn "settings has changes since the last render in: $(changed_settings_keys "$rendered_snapshot" "$settings")" >&2
+    warn "(likely from changes made in Claude Code)." >&2
     warn "Run 'claude-plugins capture' first to preserve them." >&2
     warn "Proceeding to overwrite with the rendered result." >&2
   fi
@@ -1652,7 +1711,7 @@ update_plugin_versions() {
     if [ -f "$lock_file" ] \
       && jq -e --arg name "$plugin_name" 'has($name)' "$lock_file" \
         >/dev/null 2>&1; then
-      warn "Keeping $plugin_name - enabled but not installed on this machine" >&2
+      info "Keeping $plugin_name - enabled but not installed on this machine (run 'claude-plugins install')"
       keep_lock_entry "$lock_file" "$lock_file.tmp" "$plugin_name"
     fi
   done
@@ -1758,13 +1817,8 @@ verify_marketplaces() {
     return 1
   fi
 
-  if [ ! -d "$marketplaces_dir" ]; then
-    warn "Marketplaces directory not found: $marketplaces_dir" >&2
-    warn "Run 'claude-plugins update' to install marketplaces" >&2
-    return 0
-  fi
-
   local marketplace_missing_count=0
+  local marketplace_updated_count=0
   local marketplace_match_count=0
   local marketplace_mismatch_count=0
   local marketplace_local_count=0
@@ -1811,6 +1865,10 @@ verify_marketplaces() {
       if [ "$actual_commit" = "$expected_commit" ]; then
         info "Ok: $marketplace_name @ $actual_commit"
         marketplace_match_count=$((marketplace_match_count + 1))
+      elif [ "$actual_commit" != "unknown" ] \
+        && is_snapshot_dir "$marketplace_dir"; then
+        info "Updated: $marketplace_name @ $actual_commit (snapshot kept current by Claude Code; locked $expected_commit)"
+        marketplace_updated_count=$((marketplace_updated_count + 1))
       else
         warn "Mismatch: $marketplace_name"
         warn "  Expected: $expected_commit"
@@ -1850,6 +1908,8 @@ verify_marketplaces() {
   indent printf "Matching: %d\n" "$marketplace_match_count"
   indent printf "Missing:  %d\n" "$marketplace_missing_count"
   indent printf "Mismatch: %d\n" "$marketplace_mismatch_count"
+  indent printf "Updated:  %d (snapshots kept current by Claude Code)\n" \
+    "$marketplace_updated_count"
   indent printf "Local:    %d\n" "$marketplace_local_count"
 
   if [ "$exit_code" -eq 0 ]; then
@@ -1858,7 +1918,7 @@ verify_marketplaces() {
   else
     printf "\n"
     indent printf "Some marketplaces need attention.\n"
-    indent printf "Run 'claude-plugins update' to fix.\n"
+    indent printf "Run 'claude-plugins install' to fix.\n"
   fi
 
   return "$exit_code"
@@ -1886,13 +1946,8 @@ verify_plugins() {
     return 1
   fi
 
-  if [ ! -d "$cache_dir" ]; then
-    warn "Plugin cache directory not found: $cache_dir" >&2
-    warn "Plugins will be downloaded on first Claude Code run." >&2
-    return 0
-  fi
-
   local plugin_missing_count=0
+  local plugin_updated_count=0
   local plugin_mismatch_count=0
   local plugin_extra_count=0
   local plugin_match_count=0
@@ -1959,6 +2014,10 @@ verify_plugins() {
     if [ "$actual_commit" = "$expected_commit" ]; then
       info "OK: $plugin_name @ $actual_commit"
       plugin_match_count=$((plugin_match_count + 1))
+    elif [ "$actual_commit" != "unknown" ] \
+      && marketplace_is_snapshot "$marketplace_name"; then
+      info "Updated: $plugin_name @ $actual_commit (from snapshot marketplace $marketplace_name, kept current by Claude Code; locked $expected_commit)"
+      plugin_updated_count=$((plugin_updated_count + 1))
     else
       warn "Mismatch: $plugin_name"
       warn "  Expected: $expected_commit"
@@ -2011,6 +2070,8 @@ verify_plugins() {
   indent printf "Matching: %d\n" "$plugin_match_count"
   indent printf "Missing:  %d\n" "$plugin_missing_count"
   indent printf "Mismatch: %d\n" "$plugin_mismatch_count"
+  indent printf "Updated:  %d (from snapshots kept current by Claude Code)\n" \
+    "$plugin_updated_count"
   indent printf "Extra:    %d\n" "$plugin_extra_count"
 
   if [ "$exit_code" -eq 0 ]; then
@@ -2019,6 +2080,7 @@ verify_plugins() {
   else
     printf "\n"
     indent printf "Some plugins need attention.\n"
+    indent printf "Run 'claude-plugins install' to fix.\n"
   fi
 
   return "$exit_code"
@@ -2065,7 +2127,12 @@ verify_settings_render() {
     info "OK: settings file matches base + local overlay"
     return 0
   else
-    warn "DRIFT: settings file differs from what base + local overlay would render"
+    local expected_file
+    expected_file="$(mktemp_file)"
+    cleanup_file "$expected_file"
+    printf "%s\n" "$expected" >"$expected_file"
+
+    warn "DRIFT: settings file differs from what base + local overlay would render in: $(changed_settings_keys "$expected_file" "$settings")"
     warn "(Expected if you toggled plugins in Claude Code and haven't"
     warn "run 'claude-plugins capture' yet.)"
     return 1
