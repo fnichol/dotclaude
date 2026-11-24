@@ -3,7 +3,9 @@
 # for claude-plugins. It writes known_marketplaces.json and installed_plugins.json
 # in the same shape real Claude Code does:
 #
-# - A marketplace "owner/<name>" is cloned from "$REMOTES/<name>.git".
+# - A marketplace "owner/<name>" is cloned from "$REMOTES/<name>.git", unless
+#   "$REMOTES/<name>.snapshot" exists: then it is installed as a snapshot, like
+#   Claude Code does for claude-plugins-official (no .git, commit in .gcs-sha).
 # - A local plugin (string source) is copied out of its marketplace and gets no
 #   gitCommitSha, while a URL plugin is cloned and records its gitCommitSha.
 #
@@ -26,6 +28,15 @@ update_json() {
   jq "$@" "$file" >"$file.stub" && mv "$file.stub" "$file"
 }
 
+# Replaces a directory's contents with a snapshot of a remote's HEAD
+write_snapshot() {
+  local name="$1" dir="$2"
+  mkdir -p "$dir"
+  find "$dir" -mindepth 1 -delete
+  git --git-dir "$REMOTES/$name.git" archive HEAD | tar -x -C "$dir"
+  git --git-dir "$REMOTES/$name.git" rev-parse HEAD >"$dir/.gcs-sha"
+}
+
 marketplace_dir() {
   jq -r --arg n "$1" '.[$n].installLocation // empty' "$known"
 }
@@ -38,15 +49,23 @@ case "${1:-} ${2:-}" in
         name="${repo##*/}"
         dir="$plugins_dir/marketplaces/$name"
         [ -d "$REMOTES/$name.git" ] || exit 1
-        git clone -q "$REMOTES/$name.git" "$dir"
+        if [ -f "$REMOTES/$name.snapshot" ]; then
+          write_snapshot "$name" "$dir"
+        else
+          git clone -q "$REMOTES/$name.git" "$dir"
+        fi
         update_json "$known" \
           --arg n "$name" --arg r "$repo" --arg d "$dir" \
           '.[$n] = {source: {source: "github", repo: $r}, installLocation: $d, lastUpdated: "stub"}'
         ;;
       update)
         dir="$(marketplace_dir "$4")"
-        git -C "$dir" fetch -q origin
-        git -C "$dir" reset -q --hard origin/HEAD
+        if [ -f "$REMOTES/$4.snapshot" ]; then
+          write_snapshot "$4" "$dir"
+        else
+          git -C "$dir" fetch -q origin
+          git -C "$dir" reset -q --hard origin/HEAD
+        fi
         ;;
       *)
         exit 2

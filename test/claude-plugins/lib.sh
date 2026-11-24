@@ -504,3 +504,14 @@ lock_non_github_marketplace() {
   edit_json "$ML" \
     '.weird = {source: "git", repo: "https://example.com/y.git", commit: "abc", updated: "x"}'
 }
+# Turns an installed marketplace into a snapshot install, the way Claude Code
+# installs claude-plugins-official: no .git, its commit recorded in .gcs-sha.
+# Later adds and updates of it (via the stub) stay snapshots.
+make_snapshot_marketplace() {
+  local name="$1" dir="$CP/marketplaces/$1"
+  touch "$REMOTES/$name.snapshot"
+  if [ -d "$dir/.git" ]; then
+    local_head "$dir" >"$dir/.gcs-sha"
+    rm -rf "$dir/.git"
+  fi
+}

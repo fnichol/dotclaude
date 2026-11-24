@@ -207,6 +207,10 @@ be synced anywhere. It is:
   `~/.claude/settings.json`.
 - **Yours to hand-edit.** Add plugin/marketplace entries here directly for
   anything that should only apply to this one machine.
+- **Not tracked in the lock files.** Plugins enabled only here, and
+  marketplaces only they use, are reported as "local" by `claude-plugins` and
+  never added to the version-controlled lock files. Install and update them
+  with Claude Code itself.
 - **Not backed up by this repo, by design.** If a machine is wiped or
   reinstalled, its local overlay is simply gone. If you want it preserved,
   that's a separate, deliberate choice on your part (e.g. a private note or
@@ -215,6 +219,13 @@ be synced anywhere. It is:
 If you toggle plugins via Claude Code's `/plugin` UI instead of editing
 these files directly, run `claude-plugins capture` before committing to
 route the change into `settings.base.json` or the local overlay.
+
+A few settings change constantly as you use Claude Code (currently just
+`model`, e.g. via `/model`). These are treated as live, machine-owned
+settings: `render` keeps whatever value Claude Code last saved in
+`settings.json`, and `verify`/`capture` ignore changes to them. Put a default
+in your local overlay (e.g. `"model": "opus"`) to use when `settings.json`
+doesn't have one yet; keep them out of `settings.base.json`.
 
 ## Helper Scripts
 
@@ -250,8 +261,8 @@ claude-plugins help
 
 - `install` - Sync installed marketplaces and plugins to exact lock file versions (equivalent to old `sync-plugins.sh`)
   - Renders `~/.claude/settings.json` from `settings.base.json` + the local overlay first
-  - Automatically detects and adds new marketplaces to the lock file
-  - Detects and adds new enabled plugins to the lock file
+  - Adds plugins newly enabled in `settings.base.json` (and the marketplaces they use) to the lock files, and removes ones no longer used by the base
+  - Leaves locked plugins and marketplaces that aren't installed yet in the lock and installs them
 - `update` - Install/update marketplaces and capture current plugin versions (equivalent to old `update-plugins.sh`)
 - `verify` - Verify installed marketplaces and plugins match lock file versions (equivalent to old `verify-plugins.sh`), including whether `settings.json` matches what would be rendered
 - `render` - Render `~/.claude/settings.json` from `settings.base.json` + the local overlay, creating an empty local overlay stub if one doesn't exist yet
@@ -259,9 +270,9 @@ claude-plugins help
 
 **Notes:**
 
-- Only **enabled** plugins (from the rendered `settings.json`) are tracked in the lock files
-- Disabled plugins are automatically excluded from sync and verification operations
-- When you enable a plugin from a new marketplace, run `claude-plugins install` to add both the marketplace and plugin to the lock files
+- Only plugins **enabled in `settings.base.json`** are tracked in the lock files, along with the marketplaces they use (and any declared in its `extraKnownMarketplaces`). Plugins and marketplaces used only by the local overlay are reported as local and left alone.
+- When you enable a plugin from a new marketplace in the base, run `claude-plugins install` to add both the marketplace and plugin to the lock files
+- Some marketplaces (such as `claude-plugins-official`) are installed by Claude Code as snapshots rather than git clones. Their commit is read from the snapshot's `.gcs-sha` file; `install` can't pin a snapshot to an older commit, so it refreshes it through Claude Code and warns if it still doesn't match (run `claude-plugins update` to lock the current snapshot)
 - Claude Code's internal `known_marketplaces.json`/`installed_plugins.json` files are not public API; `claude-plugins` asserts their expected shape before trusting them and fails loudly if that shape looks unexpected, rather than silently mis-recording drift
 
 ## Cross-Platform Notes

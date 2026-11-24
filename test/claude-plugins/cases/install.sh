@@ -44,8 +44,8 @@ begin fresh-machine-with-other-marketplace
 fresh_machine_with_other_marketplace
 run install
 assert_eq "exits 0" "$EC" 0
-assert_eq "locked marketplaces are kept and installed mkt-c added" \
-  "$(json_keys "$ML")" "mkt-a,mkt-b,mkt-c"
+assert_eq "locked marketplaces are kept; undeclared mkt-c stays local" \
+  "$(json_keys "$ML")" "mkt-a,mkt-b"
 assert_eq "plugin lock is unchanged" "$(json_keys "$PL")" "p1,urlp"
 assert_eq "locked plugins are installed" "$(installed_keys)" "p1@mkt-a,urlp@mkt-b"
 run verify
@@ -68,7 +68,7 @@ edit_json "$BASE" '.enabledPlugins["pc@mkt-c"] = true'
 run install
 assert_eq "exits 1" "$EC" 1
 assert_contains "warns about the plugin" "$OUTPUT" \
-  "Plugin pc@mkt-c is enabled but neither installed nor locked"
+  "Plugin pc@mkt-c is enabled in the base but neither installed nor locked"
 assert_eq "plugin lock is unchanged" "$(json_keys "$PL")" "p1,urlp"
 
 begin no-settings

@@ -1,0 +1,7 @@
+command: claude-plugins install
+exit: 0
+claude calls:
+  claude plugin marketplace update mkt-a
+  claude plugin remove p1@mkt-a
+  claude plugin install p1@mkt-a
+changes:

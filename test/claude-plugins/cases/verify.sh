@@ -21,7 +21,7 @@ snapshot_case verify-clean noop verify
 snapshot_case verify-settings-drift drift_live_settings verify
 snapshot_case verify-no-settings remove_settings verify
 snapshot_case verify-no-overlay remove_overlay verify
-snapshot_case verify-mkt-extra-installed install_mkt_c verify
+snapshot_case verify-mkt-local-installed install_mkt_c verify
 snapshot_case verify-mkt-lock-extra lock_ghost_marketplace verify
 snapshot_case verify-mkt-behind rewind_mkt_a verify
 snapshot_case verify-mkt-missing-dir remove_mkt_b_dir verify
@@ -68,15 +68,15 @@ assert_eq "install fixes what verify reported" "$EC" 0
 begin unneeded-locked-marketplace
 lock_ghost_marketplace
 run verify
-assert_contains "reports marketplace nobody needs" "$OUTPUT" \
-  "DRIFT: Marketplace 'ghost' is in lock file but neither installed nor used"
+assert_contains "reports marketplace the base does not use" "$OUTPUT" \
+  "DRIFT: Marketplace 'ghost' is in lock file but not used by the base settings"
 
 begin locked-plugin-disabled
 edit_json "$BASE" '.enabledPlugins["urlp@mkt-b"] = false'
 render_fixture_settings
 run verify
-assert_contains "reports locked plugin disabled in settings" "$OUTPUT" \
-  "DRIFT: Plugin 'urlp' is in lock file but not enabled in settings"
+assert_contains "reports locked plugin disabled in the base" "$OUTPUT" \
+  "DRIFT: Plugin 'urlp' is in lock file but not enabled in the base settings"
 
 begin fresh-machine
 fresh_machine

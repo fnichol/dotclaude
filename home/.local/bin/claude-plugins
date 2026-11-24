@@ -51,6 +51,12 @@ declare_globals() {
   # Newline-separated names of marketplaces whose commit changed during this
   # run, used to refresh local plugins that are copied from them
   _MOVED_MARKETPLACES=""
+
+  # Top-level settings that Claude Code itself changes as you use it (e.g.
+  # switching models). Rendering keeps their live value from settings.json,
+  # falling back to base + overlay, and drift checks ignore them, so they never
+  # show up as changes to capture or version.
+  _LIVE_SETTINGS_KEYS='["model"]'
 }
 
 usage_and_die() {
@@ -380,7 +386,7 @@ create_marketplace_lock_entry() {
   )"
 
   if [ -n "$marketplace_dir" ] && [ -d "$marketplace_dir" ]; then
-    commit="$(get_git_commit "$marketplace_dir")"
+    commit="$(get_marketplace_commit "$marketplace_dir")"
     indent printf "  @ %s\n" "$commit" >&2
   fi
 
@@ -417,16 +423,55 @@ create_plugin_lock_entry() {
     '{marketplace: $marketplace, commit: $commit, updated: $updated}'
 }
 
-enabled_plugin_keys() {
+# Prints the plugin@marketplace keys enabled in settings.base.json. Only these
+# shared plugins are tracked in the (version-controlled) lock files; plugins
+# enabled only in the local overlay stay local to this machine.
+base_enabled_plugin_keys() {
+  local base_settings="$_BASE_SETTINGS_FILE_PATH"
+
+  if [ ! -f "$base_settings" ]; then
+    return 0
+  fi
+
+  jq -r \
+    '(.enabledPlugins // {}) | to_entries[] | select(.value == true) | .key' \
+    "$base_settings"
+}
+
+# Prints the marketplaces settings.base.json depends on: those of its enabled
+# plugins plus any it declares in extraKnownMarketplaces
+base_marketplace_names() {
+  local base_settings="$_BASE_SETTINGS_FILE_PATH"
+
+  if [ ! -f "$base_settings" ]; then
+    return 0
+  fi
+
+  {
+    base_enabled_plugin_keys | sed 's/.*@//'
+    jq -r '(.extraKnownMarketplaces // {}) | keys[]' "$base_settings"
+  } | sed '/^$/d' | sort -u
+}
+
+# Prints the plugin@marketplace keys enabled in the rendered settings but not
+# in settings.base.json, i.e. enabled only by the local overlay
+local_enabled_plugin_keys() {
   local settings="$_SETTINGS_FILE_PATH"
 
   if [ ! -f "$settings" ]; then
     return 0
   fi
 
-  jq -r \
-    '(.enabledPlugins // {}) | to_entries[] | select(.value == true) | .key' \
-    "$settings"
+  local base_keys rendered_keys
+  base_keys="$(base_enabled_plugin_keys | sort)"
+  rendered_keys="$(
+    jq -r \
+      '(.enabledPlugins // {}) | to_entries[] | select(.value == true) | .key' \
+      "$settings" \
+      | sort
+  )"
+
+  list_diff "$rendered_keys" "$base_keys"
 }
 
 get_git_commit() {
@@ -434,6 +479,21 @@ get_git_commit() {
 
   if [ -d "$dir/.git" ]; then
     (cd "$dir" && git rev-parse HEAD 2>/dev/null) || printf "unknown"
+  else
+    printf "unknown"
+  fi
+}
+
+# Prints the commit a marketplace directory is at. Claude Code installs some
+# marketplaces (such as claude-plugins-official) as snapshots rather than git
+# clones; those record their commit in a .gcs-sha file.
+get_marketplace_commit() {
+  local dir="$1"
+
+  if [ -d "$dir/.git" ]; then
+    get_git_commit "$dir"
+  elif [ -s "$dir/.gcs-sha" ]; then
+    tr -d '[:space:]' <"$dir/.gcs-sha"
   else
     printf "unknown"
   fi
@@ -558,7 +618,7 @@ install_marketplaces() {
       continue
     fi
 
-    # Check if marketplace is already installed
+    # Add the marketplace via the claude CLI if it is not installed yet
     local is_installed
     is_installed="$(
       jq -r \
@@ -568,48 +628,7 @@ install_marketplaces() {
         || printf "false"
     )"
 
-    if [ "$is_installed" = "true" ]; then
-      # Marketplace exists, check if it's at the right commit
-      local marketplace_dir
-      marketplace_dir="$(
-        jq -r \
-          --arg name "$marketplace_name" \
-          '.[$name].installLocation' \
-          "$known_marketplaces"
-      )"
-
-      if [ -d "$marketplace_dir" ]; then
-        cd "$marketplace_dir"
-
-        local actual_commit
-        actual_commit="$(git rev-parse HEAD 2>/dev/null || printf "unknown")"
-
-        if [ "$actual_commit" = "$expected_commit" ]; then
-          info "Already synced: $marketplace_name @ $expected_commit"
-          cd - >/dev/null 2>&1
-          continue
-        else
-          indent printf "Syncing: %s\n" "$marketplace_name"
-          indent printf "  From: %s\n" "$actual_commit"
-          indent printf "  To:   %s\n" "$expected_commit"
-
-          git fetch origin >/dev/null 2>&1 || {
-            warn "Could not fetch from origin" >&2
-          }
-
-          if ! git reset --hard "$expected_commit" 2>/dev/null; then
-            warn "Could not reset to commit $expected_commit" >&2
-            exit_code=1
-            cd - >/dev/null 2>&1
-            continue
-          fi
-          mark_marketplace_moved "$marketplace_name"
-          marketplace_synced_count=$((marketplace_synced_count + 1))
-        fi
-        cd - >/dev/null 2>&1
-      fi
-    else
-      # Marketplace not installed, add it via claude CLI
+    if [ "$is_installed" != "true" ]; then
       info "Installing: $marketplace_name (from $repo)"
 
       if ! claude plugin marketplace add "$repo" >/dev/null 2>&1; then
@@ -617,33 +636,75 @@ install_marketplaces() {
         exit_code=1
         continue
       fi
+    fi
 
-      # After adding, reset to the specific commit
-      local marketplace_dir
-      marketplace_dir="$(
-        jq -r \
-          --arg name "$marketplace_name" \
-          '.[$name].installLocation' \
-          "$known_marketplaces" 2>/dev/null
-      )"
+    local marketplace_dir
+    marketplace_dir="$(
+      jq -r \
+        --arg name "$marketplace_name" \
+        '.[$name].installLocation // empty' \
+        "$known_marketplaces" 2>/dev/null
+    )"
 
-      if [ -n "$marketplace_dir" ] && [ -d "$marketplace_dir" ]; then
-        cd "$marketplace_dir"
+    if [ -z "$marketplace_dir" ] || [ ! -d "$marketplace_dir" ]; then
+      warn "Could not find installed marketplace directory" >&2
+      exit_code=1
+      continue
+    fi
 
-        if ! git reset --hard "$expected_commit" 2>/dev/null; then
-          warn "Could not reset to commit $expected_commit" >&2
-          exit_code=1
-          cd - >/dev/null 2>&1
-          continue
-        fi
-        cd - >/dev/null 2>&1
+    local actual_commit
+    actual_commit="$(get_marketplace_commit "$marketplace_dir")"
+
+    if [ "$actual_commit" = "$expected_commit" ]; then
+      if [ "$is_installed" = "true" ]; then
+        info "Already synced: $marketplace_name @ $expected_commit"
+      else
         indent printf "  @ %s\n" "$expected_commit"
         marketplace_synced_count=$((marketplace_synced_count + 1))
-      else
-        warn "Could not find installed marketplace directory" >&2
+      fi
+      continue
+    fi
+
+    indent printf "Syncing: %s\n" "$marketplace_name"
+    indent printf "  From: %s\n" "$actual_commit"
+    indent printf "  To:   %s\n" "$expected_commit"
+
+    if [ -d "$marketplace_dir/.git" ]; then
+      git -C "$marketplace_dir" fetch origin >/dev/null 2>&1 || {
+        warn "Could not fetch from origin" >&2
+      }
+
+      if ! git -C "$marketplace_dir" reset --hard "$expected_commit" \
+        >/dev/null 2>&1; then
+        warn "Could not reset to commit $expected_commit" >&2
         exit_code=1
+        continue
+      fi
+    else
+      # A snapshot marketplace (no git checkout) cannot be pinned to a
+      # commit, so ask Claude Code to refresh it and see where it lands
+      if ! claude plugin marketplace update "$marketplace_name" \
+        >/dev/null 2>&1; then
+        warn "Could not update marketplace" >&2
+      fi
+
+      local current_commit
+      current_commit="$(get_marketplace_commit "$marketplace_dir")"
+
+      if [ "$current_commit" != "$actual_commit" ]; then
+        mark_marketplace_moved "$marketplace_name"
+      fi
+
+      if [ "$current_commit" != "$expected_commit" ]; then
+        warn "Cannot pin $marketplace_name to $expected_commit: Claude Code installs it as a snapshot, now at $current_commit" >&2
+        warn "Run 'claude-plugins update' to lock the current snapshot" >&2
+        marketplace_skipped_count=$((marketplace_skipped_count + 1))
+        continue
       fi
     fi
+
+    mark_marketplace_moved "$marketplace_name"
+    marketplace_synced_count=$((marketplace_synced_count + 1))
   done
 
   printf "\n"
@@ -897,64 +958,74 @@ marketplace_moved() {
 }
 
 # Prints the changes that would bring the marketplaces lock file in line with
-# Claude, one per line:
+# the marketplaces settings.base.json depends on, one per line:
 #
-#   add <name>     installed in Claude but not in the lock file
-#   remove <name>  in the lock file but neither installed nor used by a plugin
-#                  that is enabled in settings
+#   add <name>       wanted and installed but not in the lock file
+#   unlocked <name>  wanted but neither installed nor in the lock file
+#   remove <name>    in the lock file but no longer wanted
+#   local <name>     installed but not wanted (local to this machine, untracked)
 plan_marketplace_lock_changes() {
   local lock_file="$_MARKETPLACES_LOCK_FILE_PATH"
   local known_marketplaces="$_KNOWN_MARKETPLACES_FILE_PATH"
 
-  local lock_names installed_names needed_names keep_names
+  local lock_names installed_names wanted_names
   lock_names="$(jq -r 'keys[]' "$lock_file" | sort)"
   installed_names=""
   if [ -f "$known_marketplaces" ]; then
     installed_names="$(jq -r 'keys[]' "$known_marketplaces" | sort)"
   fi
-  needed_names="$(enabled_plugin_keys | sed 's/.*@//' | sort -u)"
-  keep_names="$(
-    printf "%s\n%s\n" "$installed_names" "$needed_names" \
-      | sed '/^$/d' \
-      | sort -u
-  )"
+  wanted_names="$(base_marketplace_names)"
 
-  local missing extra name
-  missing="$(list_diff "$installed_names" "$lock_names")"
-  extra="$(list_diff "$lock_names" "$keep_names")"
+  local name
+  for name in $wanted_names; do
+    if printf "%s\n" "$lock_names" | grep -Fqx "$name"; then
+      continue
+    fi
 
-  for name in $missing; do
-    printf "add %s\n" "$name"
+    if printf "%s\n" "$installed_names" | grep -Fqx "$name"; then
+      printf "add %s\n" "$name"
+    else
+      printf "unlocked %s\n" "$name"
+    fi
   done
+
+  local extra local_only
+  extra="$(list_diff "$lock_names" "$wanted_names")"
+  local_only="$(list_diff "$(list_diff "$installed_names" "$wanted_names")" "$lock_names")"
+
   for name in $extra; do
     printf "remove %s\n" "$name"
+  done
+  for name in $local_only; do
+    printf "local %s\n" "$name"
   done
 }
 
 # Prints the changes that would bring the plugins lock file in line with the
-# plugins enabled in settings, one per line:
+# plugins enabled in settings.base.json, one per line:
 #
 #   add <name> <key>       enabled and installed but not in the lock file
 #   unlocked <name> <key>  enabled but neither installed nor in the lock file
-#   remove <name>          in the lock file but not enabled in settings
+#   remove <name>          in the lock file but not enabled in the base
+#   local <name> <key>     enabled only by the local overlay (untracked)
 #
 # Plugins that are enabled and locked but not yet installed are left alone so
 # that install can install them.
 plan_plugin_lock_changes() {
   local lock_file="$_PLUGINS_LOCK_FILE_PATH"
 
-  local lock_names enabled_keys enabled_names
+  local lock_names wanted_keys wanted_names
   lock_names="$(jq -r 'keys[]' "$lock_file" | sort)"
-  enabled_keys="$(enabled_plugin_keys | sort)"
-  enabled_names="$(
-    printf "%s\n" "$enabled_keys" \
+  wanted_keys="$(base_enabled_plugin_keys | sort)"
+  wanted_names="$(
+    printf "%s\n" "$wanted_keys" \
       | sed 's/@.*//' \
       | sed '/^$/d' \
       | sort -u
   )"
 
   local key name
-  for key in $enabled_keys; do
+  for key in $wanted_keys; do
     name="$(printf "%s" "$key" | sed 's/@.*//')"
 
     if printf "%s\n" "$lock_names" | grep -Fqx "$name"; then
@@ -968,11 +1039,15 @@ plan_plugin_lock_changes() {
     fi
   done
 
-  local extra
-  extra="$(list_diff "$lock_names" "$enabled_names")"
+  local extra local_keys
+  extra="$(list_diff "$lock_names" "$wanted_names")"
+  local_keys="$(local_enabled_plugin_keys)"
 
   for name in $extra; do
     printf "remove %s\n" "$name"
+  done
+  for key in $local_keys; do
+    printf "local %s %s\n" "$(printf "%s" "$key" | sed 's/@.*//')" "$key"
   done
 }
 
@@ -1025,6 +1100,37 @@ print_summary() {
   fi
 }
 
+# render_settings_json <base> <overlay>: prints base merged with overlay, with
+# the live settings keys taken from the current settings.json when present
+render_settings_json() {
+  local base_settings="$1"
+  local overlay="$2"
+
+  local live="$_SETTINGS_FILE_PATH"
+  if [ ! -f "$live" ] || ! jq -e . "$live" >/dev/null 2>&1; then
+    live=/dev/null
+  fi
+
+  jq -n --sort-keys \
+    --slurpfile base "$base_settings" \
+    --slurpfile overlay "$overlay" \
+    --slurpfile live "$live" \
+    --argjson live_keys "$_LIVE_SETTINGS_KEYS" \
+    '($live[0] // {}) as $current
+    | reduce $live_keys[] as $key ($base[0] * $overlay[0];
+        if $current | has($key) then .[$key] = $current[$key] else . end)'
+}
+
+# settings_differ <file> <file>: true if two settings files differ in anything
+# other than the live settings keys
+settings_differ() {
+  # shellcheck disable=SC2016
+  local filter='delpaths([$keys[] | [.]])'
+
+  [ "$(jq -S --argjson keys "$_LIVE_SETTINGS_KEYS" "$filter" "$1")" \
+    != "$(jq -S --argjson keys "$_LIVE_SETTINGS_KEYS" "$filter" "$2")" ]
+}
+
 render_settings() {
   local mode="${1:-}"
 
@@ -1049,15 +1155,15 @@ render_settings() {
 
   if [ "$mode" != "quiet-drift-warning" ] \
     && [ -f "$settings" ] && [ -f "$rendered_snapshot" ] \
-    && ! diff -q "$settings" "$rendered_snapshot" >/dev/null 2>&1; then
+    && settings_differ "$settings" "$rendered_snapshot"; then
     warn "Warning: settings has changes since the last render" >&2
     warn "(likely from toggling plugins in Claude Code)." >&2
     warn "Run 'claude-plugins capture' first to preserve them." >&2
     warn "Proceeding to overwrite with the rendered result." >&2
   fi
 
-  if ! jq -s --sort-keys '.[0] * .[1]' \
-    "$base_settings" "$local_settings_overlay" >"$settings.tmp"; then
+  if ! render_settings_json "$base_settings" "$local_settings_overlay" \
+    >"$settings.tmp"; then
     warn "Failed to render settings from base and overlay" >&2
     rm -f "$settings.tmp"
     return 1
@@ -1080,7 +1186,7 @@ sync_lock_file() {
   local plan_fn="$4"
   local create_entry_fn="$5"
 
-  local settings="$_SETTINGS_FILE_PATH"
+  local base_settings="$_BASE_SETTINGS_FILE_PATH"
 
   section "Syncing $item_type_plural lock file"
 
@@ -1089,11 +1195,10 @@ sync_lock_file() {
     return 1
   fi
 
-  # The enabled plugins in the rendered settings decide what the lock files
-  # keep, so never prune a lock file without them
-  if [ ! -f "$settings" ]; then
-    warn "Settings file not found: $settings" >&2
-    warn "Run 'claude-plugins render' first" >&2
+  # settings.base.json decides what the lock files keep, so never prune a
+  # lock file without it
+  if [ ! -f "$base_settings" ]; then
+    warn "Base settings file not found: $base_settings" >&2
     return 1
   fi
 
@@ -1126,9 +1231,16 @@ sync_lock_file() {
         removed_count=$((removed_count + 1))
         ;;
       unlocked)
-        warn "Plugin $key is enabled but neither installed nor locked" >&2
+        if [ "$item_type" = "plugin" ]; then
+          warn "Plugin $key is enabled in the base but neither installed nor locked" >&2
+        else
+          warn "Marketplace $name is used by the base but neither installed nor locked" >&2
+        fi
         warn "Install it, then run 'claude-plugins update' to lock it" >&2
         exit_code=1
+        ;;
+      local)
+        info "Local only: ${key:-$name} (not tracked in the lock file)"
         ;;
     esac
   done <<EOF
@@ -1258,7 +1370,7 @@ update_marketplaces() {
 
     previous_commit="unknown"
     if [ -n "$marketplace_dir" ]; then
-      previous_commit="$(get_git_commit "$marketplace_dir")"
+      previous_commit="$(get_marketplace_commit "$marketplace_dir")"
     fi
 
     info "Updating: $marketplace_name"
@@ -1268,7 +1380,7 @@ update_marketplaces() {
 
     # Get the current commit after update
     if [ -n "$marketplace_dir" ]; then
-      commit="$(get_git_commit "$marketplace_dir")"
+      commit="$(get_marketplace_commit "$marketplace_dir")"
       indent printf "  @ %s\n" "$commit"
     else
       commit="unknown"
@@ -1314,7 +1426,7 @@ update_plugin_versions() {
 
   local lock_file="$_PLUGINS_LOCK_FILE_PATH"
   local installed_plugins_file="$_INSTALLED_PLUGINS_FILE_PATH"
-  local settings_file="$_SETTINGS_FILE_PATH"
+  local base_settings="$_BASE_SETTINGS_FILE_PATH"
 
   if [ ! -f "$installed_plugins_file" ]; then
     warn "No plugins installed yet." >&2
@@ -1329,13 +1441,14 @@ update_plugin_versions() {
   plugin_keys=$(jq -r '.plugins | keys[]' "$installed_plugins_file" 2>/dev/null)
 
   for plugin_key in $plugin_keys; do
-    # Skip plugins that are not enabled in settings.json
+    # Only plugins enabled in settings.base.json are tracked in the lock file;
+    # plugins enabled only by the local overlay stay local to this machine
     local is_enabled
     is_enabled="$(
       jq -r \
         --arg key "$plugin_key" \
         '.enabledPlugins[$key] // false' \
-        "$settings_file" 2>/dev/null
+        "$base_settings" 2>/dev/null
     )"
     if [ "$is_enabled" != "true" ]; then
       continue
@@ -1439,7 +1552,7 @@ update_plugin_versions() {
   # Plugins enabled in settings but not installed on this machine keep their
   # existing lock entry rather than being dropped from the rebuilt lock file
   local enabled_keys
-  enabled_keys="$(enabled_plugin_keys)"
+  enabled_keys="$(base_enabled_plugin_keys)"
 
   for plugin_key in $enabled_keys; do
     if plugin_is_installed "$plugin_key"; then
@@ -1476,7 +1589,7 @@ verify_lock_file_drift() {
   local lock_file="$3"
   local plan_fn="$4"
 
-  local settings="$_SETTINGS_FILE_PATH"
+  local base_settings="$_BASE_SETTINGS_FILE_PATH"
 
   section "Checking $item_type_plural lock file drift"
 
@@ -1485,9 +1598,8 @@ verify_lock_file_drift() {
     return 1
   fi
 
-  if [ ! -f "$settings" ]; then
-    warn "Settings file not found: $settings" >&2
-    warn "Run 'claude-plugins render' first" >&2
+  if [ ! -f "$base_settings" ]; then
+    warn "Base settings file not found: $base_settings" >&2
     return 1
   fi
 
@@ -1509,17 +1621,24 @@ verify_lock_file_drift() {
         ;;
       remove)
         if [ "$item_type" = "plugin" ]; then
-          warn "DRIFT: Plugin '$name' is in lock file but not enabled in settings"
+          warn "DRIFT: Plugin '$name' is in lock file but not enabled in the base settings"
         else
-          warn "DRIFT: Marketplace '$name' is in lock file but neither installed nor used by an enabled plugin"
+          warn "DRIFT: Marketplace '$name' is in lock file but not used by the base settings"
         fi
         extra_count=$((extra_count + 1))
         result=1
         ;;
       unlocked)
-        warn "DRIFT: Plugin $key is enabled but neither installed nor locked"
+        if [ "$item_type" = "plugin" ]; then
+          warn "DRIFT: Plugin $key is enabled in the base but neither installed nor locked"
+        else
+          warn "DRIFT: Marketplace $name is used by the base but neither installed nor locked"
+        fi
         missing_count=$((missing_count + 1))
         result=1
+        ;;
+      local)
+        info "Local only: ${key:-$name} (not tracked in the lock file)"
         ;;
     esac
   done <<EOF
@@ -1561,7 +1680,7 @@ verify_marketplaces() {
   local marketplace_missing_count=0
   local marketplace_match_count=0
   local marketplace_mismatch_count=0
-  local marketplace_extra_count=0
+  local marketplace_local_count=0
   local exit_code=0
 
   local expected_marketplaces
@@ -1597,7 +1716,7 @@ verify_marketplaces() {
     fi
 
     local actual_commit
-    actual_commit=$(get_git_commit "$marketplace_dir")
+    actual_commit=$(get_marketplace_commit "$marketplace_dir")
 
     if [ "$expected_commit" != "unknown" ] \
       && [ "$expected_commit" != "null" ]; then
@@ -1634,8 +1753,8 @@ verify_marketplaces() {
     )
 
     if [ "$is_expected" = "false" ]; then
-      warn "Extra: $marketplace_name (not in lock file)"
-      marketplace_extra_count=$((marketplace_extra_count + 1))
+      info "Local: $marketplace_name (installed here, not in lock file)"
+      marketplace_local_count=$((marketplace_local_count + 1))
     fi
   done
 
@@ -1644,7 +1763,7 @@ verify_marketplaces() {
   indent printf "Matching: %d\n" "$marketplace_match_count"
   indent printf "Missing:  %d\n" "$marketplace_missing_count"
   indent printf "Mismatch: %d\n" "$marketplace_mismatch_count"
-  indent printf "Extra:    %d\n" "$marketplace_extra_count"
+  indent printf "Local:    %d\n" "$marketplace_local_count"
 
   if [ "$exit_code" -eq 0 ]; then
     printf "\n"
@@ -1772,13 +1891,17 @@ verify_plugins() {
     local is_expected
     plugin_name="$(basename "$plugin_dir")"
 
-    # Skip if this is a marketplace directory
-    is_marketplace="$(
-      jq -r \
-        --arg name "$plugin_name" \
-        'has($name)' \
-        "$marketplaces_lock_file" 2>/dev/null
-    )"
+    # Skip if this is a marketplace directory (locked or installed here)
+    is_marketplace="false"
+    local marketplaces_file
+    for marketplaces_file in \
+      "$marketplaces_lock_file" "$_KNOWN_MARKETPLACES_FILE_PATH"; do
+      if [ -f "$marketplaces_file" ] \
+        && jq -e --arg name "$plugin_name" 'has($name)' \
+          "$marketplaces_file" >/dev/null 2>&1; then
+        is_marketplace="true"
+      fi
+    done
     if [ "$is_marketplace" = "true" ]; then
       continue
     fi
@@ -1841,17 +1964,15 @@ verify_settings_render() {
     jq -n '{enabledPlugins: {}, extraKnownMarketplaces: {}}' >"$overlay"
   fi
 
-  local expected
-  expected=$(jq -s --sort-keys '.[0] * .[1]' "$base_settings" "$overlay")
-
   if [ ! -f "$settings" ]; then
     warn "MISSING: $settings has not been rendered yet" >&2
     warn "Run 'claude-plugins render' or 'claude-plugins install' to fix." >&2
     return 1
   fi
 
-  local actual
-  actual=$(jq --sort-keys . "$settings")
+  local expected actual
+  expected="$(render_settings_json "$base_settings" "$overlay")"
+  actual="$(jq --sort-keys . "$settings")"
 
   if [ "$actual" = "$expected" ]; then
     info "OK: settings file matches base + local overlay"

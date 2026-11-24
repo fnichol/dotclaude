@@ -57,18 +57,7 @@ changes:
 +}
  == .claude/settings.base.json
  {
-@@ -44,4 +86,10 @@
-     "source": "github",
-     "updated": "@TODAY@"
-+  },
-+  "mkt-c": {
-+    "commit": "72f3bdb368c3a9ce70c692adcf94195ab52fcded",
-+    "repo": "owner/mkt-c",
-+    "source": "github",
-+    "updated": "@TODAY@"
-   }
- }
-@@ -61,4 +109,20 @@
+@@ -61,4 +103,20 @@
  == .claude/plugins/known_marketplaces.json
  {
 +  "mkt-a": {
@@ -89,7 +78,7 @@ changes:
 +  },
    "mkt-c": {
      "installLocation": "@ROOT@/home/.claude/plugins/marketplaces/mkt-c",
-@@ -72,9 +136,33 @@
+@@ -72,9 +130,33 @@
  == .claude/plugins/installed_plugins.json
  {
 -  "plugins": {},
