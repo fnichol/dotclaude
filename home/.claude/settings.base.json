@@ -5,13 +5,14 @@
     "elements-of-style@superpowers-marketplace": true,
     "obsidian@fnichol-plugins": true,
     "rust-analyzer-lsp@claude-plugins-official": true,
-    "superpowers@fnichol-plugins": true,
-    "superpowers@superpowers-marketplace": false
+    "superpowers@fnichol-plugins": true
   },
   "includeCoAuthoredBy": false,
   "permissions": {
     "deny": [
       "Read(./.env)"
     ]
-  }
+  },
+  "theme": "dark",
+  "tui": "fullscreen"
 }

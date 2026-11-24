@@ -1,22 +1,22 @@
 {
   "elements-of-style": {
-    "commit": "6099c505c2a8eb066f3777f83a97d9d828f7954c",
+    "commit": "05fc4f0d2b97b7c042dd9949ad658568e4a1324e",
     "marketplace": "superpowers-marketplace",
-    "updated": "2026-03-08"
+    "updated": "2026-11-19"
   },
   "obsidian": {
     "commit": "b8da63c87273bc4f30a0d3f455301a782433a00f",
     "marketplace": "fnichol-plugins",
-    "updated": "2026-03-08"
+    "updated": "2026-11-19"
   },
   "rust-analyzer-lsp": {
     "commit": "2cd88e7947b7382e045666abee790c7f55f669f3",
     "marketplace": "claude-plugins-official",
-    "updated": "2026-03-08"
+    "updated": "2026-11-19"
   },
   "superpowers": {
-    "commit": "9a55983f696181308ea045a23155750c1a955dac",
+    "commit": "8514847800aea4c23840832a54a5cc0656af41aa",
     "marketplace": "fnichol-plugins",
-    "updated": "2026-03-08"
+    "updated": "2026-11-19"
   }
 }
