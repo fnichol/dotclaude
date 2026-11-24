@@ -4,6 +4,11 @@
     "marketplace": "superpowers-marketplace",
     "updated": "2026-11-24"
   },
+  "mattpocock-skills": {
+    "commit": "49dd158d1076134a641b33efb035946536778336",
+    "marketplace": "claude-plugins-official",
+    "updated": "2026-11-24"
+  },
   "obsidian": {
     "commit": "be50698fcf7956931d543571b4f84ccdc73a7e95",
     "marketplace": "fnichol-plugins",

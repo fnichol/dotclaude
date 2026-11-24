@@ -3,6 +3,7 @@
   "cleanupPeriodDays": 90,
   "enabledPlugins": {
     "elements-of-style@superpowers-marketplace": true,
+    "mattpocock-skills@claude-plugins-official": true,
     "obsidian@fnichol-plugins": true,
     "rust-analyzer-lsp@claude-plugins-official": true,
     "superpowers@fnichol-plugins": true

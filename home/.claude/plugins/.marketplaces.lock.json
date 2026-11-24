@@ -1,6 +1,6 @@
 {
   "claude-plugins-official": {
-    "commit": "5cec6716767283f4675a05f5f8855b5b49c81783",
+    "commit": "6985b2d88dc08b4a0d202f5f0301f02e360b9cb1",
     "repo": "anthropics/claude-plugins-official",
     "source": "github",
     "updated": "2026-11-24"
