@@ -2,26 +2,26 @@
   "elements-of-style": {
     "commit": "05fc4f0d2b97b7c042dd9949ad658568e4a1324e",
     "marketplace": "superpowers-marketplace",
-    "updated": "2026-11-24"
+    "updated": "2026-11-26"
   },
   "mattpocock-skills": {
     "commit": "49dd158d1076134a641b33efb035946536778336",
     "marketplace": "claude-plugins-official",
-    "updated": "2026-11-24"
+    "updated": "2026-11-26"
   },
   "obsidian": {
     "commit": "be50698fcf7956931d543571b4f84ccdc73a7e95",
     "marketplace": "fnichol-plugins",
-    "updated": "2026-11-24"
+    "updated": "2026-11-26"
   },
   "rust-analyzer-lsp": {
-    "commit": "5cec6716767283f4675a05f5f8855b5b49c81783",
+    "commit": "0fbfda5a91f4adc311daca25acc99132f40f0b6e",
     "marketplace": "claude-plugins-official",
-    "updated": "2026-11-24"
+    "updated": "2026-11-26"
   },
   "superpowers": {
     "commit": "8514847800aea4c23840832a54a5cc0656af41aa",
     "marketplace": "fnichol-plugins",
-    "updated": "2026-11-24"
+    "updated": "2026-11-26"
   }
 }
